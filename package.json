@@ -15,6 +15,7 @@
     "test:integration": "bun test --timeout 120000 ./apps/ingest/test ./apps/api/test",
     "test:e2e": "bun run --cwd apps/web e2e",
     "migrate": "bun run --cwd apps/ingest src/main.ts migrate",
+    "setup": "bun run --cwd apps/ingest src/main.ts setup",
     "seed": "bun run --cwd apps/ingest src/main.ts seed",
     "weather": "bun run --cwd apps/ingest src/main.ts weather",
     "replay": "bun run --cwd apps/ingest src/main.ts replay",

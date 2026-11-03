@@ -28,11 +28,23 @@ Pré-requisito: Docker com Compose. Nada mais precisa estar instalado na máquin
 ```bash
 git clone <url-do-repositório> celsius-360-lite
 cd celsius-360-lite
+```
 
-# Os dados do desafio não são versionados (são material do processo seletivo).
-# Copie os dois arquivos recebidos para a pasta dados/:
+Os dados do desafio não são versionados (são material do processo seletivo). Copie os dois arquivos recebidos para a pasta `dados/`:
+
+```bash
+# Linux, macOS ou Git Bash
 cp /caminho/dos/dados/cadastro.json /caminho/dos/dados/telemetrias.jsonl dados/
+```
 
+```powershell
+# PowerShell
+Copy-Item C:\caminho\dos\dados\cadastro.json, C:\caminho\dos\dados\telemetrias.jsonl dados\
+```
+
+E suba tudo:
+
+```bash
 docker compose up -d --build
 ```
 
@@ -52,7 +64,11 @@ O que acontece ao subir:
 **Login.** Os usuários são os do cadastro, listados na própria tela de entrada. Nenhuma senha fica no repositório: defina `DEMO_PASSWORD` antes de subir, ou use a senha que o setup gera e mostra no log:
 
 ```bash
-docker compose logs setup | grep -i senha
+docker compose logs setup | grep -i senha        # Linux, macOS ou Git Bash
+```
+
+```powershell
+docker compose logs setup | Select-String senha   # PowerShell
 ```
 
 | Usuário                             | Perfil                | Vê                               |
@@ -62,7 +78,14 @@ docker compose logs setup | grep -i senha
 | juliana.prado@modacarioca.example   | gerente de loja       | só a Loja Paulista               |
 | roberto.lima@bancohorizonte.example | gestor do cliente     | as 2 agências do Banco Horizonte |
 
-**Variáveis úteis** (num `.env` na raiz ou na linha de comando):
+**Variáveis úteis.** O jeito que funciona em qualquer sistema é um arquivo `.env` na raiz (já ignorado pelo Git), lido pelo Compose:
+
+```dotenv
+INGEST_RATE=500
+DEMO_PASSWORD=escolha-uma-senha
+```
+
+Na linha de comando também dá: `INGEST_RATE=500 docker compose up -d` no bash, ou `$env:INGEST_RATE = 500; docker compose up -d` no PowerShell.
 
 | Variável                                                   | Padrão                   | Para quê                                                                                               |
 | ---------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------ |
@@ -86,16 +109,21 @@ Com Bun 1.4.3:
 ```bash
 bun install
 bun run infra                    # só os bancos, via Compose
-bun run setup && bun run replay  # ingestão local (lê dados/)
+bun run setup                    # migrações, cadastro e temperatura externa (lê dados/)
+bun run replay                   # ingestão local
 bun run dev:api                  # API em http://localhost:3000
 bun run dev:web                  # web em http://localhost:5173, com proxy para a API
 
-bun run lint && bun run typecheck
+bun run lint
+bun run typecheck
 bun run test                     # unitários (domínio e web)
 bun run test:integration         # ingestão e API contra TimescaleDB e ClickHouse reais
-bun run e2e:stack && bun run test:e2e   # stack completa com dados sintéticos + Playwright
+bun run e2e:stack                # stack completa com dados sintéticos, em portas próprias
+bun run test:e2e                 # Playwright contra essa stack
 bun run scripts/rede-sintetica.ts --lojas 500   # mede a visão da rede com 500 lojas
 ```
+
+No Windows, `e2e:stack` precisa de um shell POSIX no PATH (Git Bash ou WSL); os demais comandos funcionam no PowerShell.
 
 Os testes não dependem dos dados do desafio: `scripts/gerar-fixture.ts` gera um conjunto sintético e determinístico (em `test/fixtures`) com as mesmas anomalias encontradas nos dados reais e o resultado esperado de cada uma.
 
