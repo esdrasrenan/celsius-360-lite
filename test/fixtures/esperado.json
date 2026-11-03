@@ -1,0 +1,16 @@
+{
+  "devices": {
+    "DEV-A": 480,
+    "DEV-B": 439,
+    "DEV-C": 480
+  },
+  "sensorErrorSamples": 3,
+  "stuckSamples": 180,
+  "savedDataPackets": 10,
+  "exactDuplicates": 2,
+  "invalidLines": 1,
+  "unknownDevicePackets": 10,
+  "offlineAtEnd": ["DEV-B"],
+  "lines": 1412,
+  "now": "2026-03-04T03:00:00.000Z"
+}
