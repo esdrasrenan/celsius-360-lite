@@ -1,0 +1,139 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/fira-code";
+
+/*
+ * Identidade da Diel Energia: cores do símbolo oficial (tinta, índigo e o degradê ciano → celsius)
+ * e as fontes do site institucional (Inter e Fira Code). Tokens herdados da proposta de site da Diel.
+ */
+:root {
+  --gelo: #f4f7fb;
+  --gelo-2: #e9eff7;
+  --branco: #ffffff;
+  --tinta: #0b0c59;
+  --tinta-2: #383c76;
+  --tinta-3: #5f6490;
+  --linha: rgb(11 12 89 / 0.1);
+  --linha-forte: rgb(11 12 89 / 0.2);
+  --indigo: #2a2f86;
+  --celsius: #363bc4;
+  --celsius-escuro: #2a2fa3;
+  --ciano: #00b9ce;
+  --ciano-claro: #8ee8f2;
+  --noite: #080a46;
+  --noite-2: #10136a;
+  --claro-2: #c4c9ec;
+  --claro-3: #9aa0d4;
+  --calor: #e5552e;
+
+  /* Estados (função, não marca) */
+  --ok: #0f9d6b;
+  --alerta: #c77700;
+  --falha: #d6364b;
+  --neutro: #8a90b4;
+  --frio: #363bc4;
+}
+
+@theme inline {
+  --color-gelo: var(--gelo);
+  --color-gelo-2: var(--gelo-2);
+  --color-branco: var(--branco);
+  --color-tinta: var(--tinta);
+  --color-tinta-2: var(--tinta-2);
+  --color-tinta-3: var(--tinta-3);
+  --color-linha: var(--linha);
+  --color-linha-forte: var(--linha-forte);
+  --color-indigo: var(--indigo);
+  --color-celsius: var(--celsius);
+  --color-celsius-escuro: var(--celsius-escuro);
+  --color-ciano: var(--ciano);
+  --color-ciano-claro: var(--ciano-claro);
+  --color-noite: var(--noite);
+  --color-noite-2: var(--noite-2);
+  --color-claro-2: var(--claro-2);
+  --color-claro-3: var(--claro-3);
+  --color-calor: var(--calor);
+  --color-ok: var(--ok);
+  --color-alerta: var(--alerta);
+  --color-falha: var(--falha);
+  --color-neutro: var(--neutro);
+  --color-frio: var(--frio);
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Fira Code Variable", ui-monospace, monospace;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  background: var(--gelo);
+  color: var(--tinta-2);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgb(54 59 196 / 0.18);
+}
+
+:focus-visible {
+  outline: 2px solid var(--celsius);
+  outline-offset: 3px;
+}
+
+@utility t-titulo {
+  color: var(--tinta);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+
+@utility t-rotulo {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+@utility t-numero {
+  color: var(--tinta);
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+@utility texto-degrade {
+  background: linear-gradient(100deg, var(--ciano) 0%, var(--celsius) 70%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@utility cartao {
+  background: var(--branco);
+  border-radius: 22px;
+  box-shadow: 0 0 0 1px var(--linha);
+}
+
+@utility pressionavel {
+  transition: transform 160ms var(--ease-out);
+  &:active {
+    transform: scale(0.97);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: precisa vencer qualquer animação para respeitar a preferência */
+    animation-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: idem */
+    transition-duration: 0.01ms !important;
+  }
+}
