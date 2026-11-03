@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualidade:
+    name: Lint, tipos e testes unitários
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun run test
+
+  integracao:
+    name: Integração (TimescaleDB + ClickHouse)
+    runs-on: ubuntu-latest
+    services:
+      timescaledb:
+        image: timescale/timescaledb:2.31.0-pg17
+        env:
+          POSTGRES_USER: celsius
+          POSTGRES_DB: celsius
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U celsius" --health-interval 2s --health-timeout 3s --health-retries 30
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.8
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: 1
+        ports: ["8123:8123"]
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'" --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      TEST_DATABASE_URL: postgres://celsius@localhost:5432/celsius
+      TEST_CLICKHOUSE_URL: http://localhost:8123
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - run: bun run test:integration
+
+  e2e:
+    name: E2E (Compose + Playwright)
+    runs-on: ubuntu-latest
+    needs: qualidade
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - name: Sobe a stack com os dados sintéticos e espera a ingestão
+        run: bun run e2e:stack
+      - run: bunx playwright install --with-deps chromium
+        working-directory: apps/web
+      - run: bun run test:e2e
+      - name: Logs da stack
+        if: failure()
+        run: COMPOSE_PROJECT_NAME=celsius-e2e docker compose logs
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report

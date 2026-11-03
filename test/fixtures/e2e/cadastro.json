@@ -1,0 +1,141 @@
+{
+  "clientes": [
+    {
+      "id": "CLI-T1",
+      "nome": "Rede Teste",
+      "segmento": "varejo"
+    },
+    {
+      "id": "CLI-T2",
+      "nome": "Outro Cliente",
+      "segmento": "bancário"
+    }
+  ],
+  "lojas": [
+    {
+      "id": "LOJA-T-SP",
+      "cliente_id": "CLI-T1",
+      "nome": "Loja Centro",
+      "tipo": "loja de rua",
+      "cidade": "São Paulo",
+      "uf": "SP",
+      "latitude": -23.55,
+      "longitude": -46.63,
+      "fuso_horario": "America/Sao_Paulo",
+      "horario_funcionamento": {
+        "seg": ["09:00", "18:00"],
+        "ter": ["09:00", "18:00"],
+        "qua": ["09:00", "18:00"],
+        "qui": ["09:00", "18:00"],
+        "sex": ["09:00", "18:00"],
+        "sab": ["09:00", "18:00"],
+        "dom": null
+      }
+    },
+    {
+      "id": "LOJA-T-PE",
+      "cliente_id": "CLI-T2",
+      "nome": "Agência Recife",
+      "tipo": "agência bancária",
+      "cidade": "Recife",
+      "uf": "PE",
+      "latitude": -8.05,
+      "longitude": -34.9,
+      "fuso_horario": "America/Recife",
+      "horario_funcionamento": {
+        "seg": ["08:00", "20:00"],
+        "ter": ["08:00", "20:00"],
+        "qua": ["08:00", "20:00"],
+        "qui": ["08:00", "20:00"],
+        "sex": ["08:00", "20:00"],
+        "sab": ["08:00", "20:00"],
+        "dom": ["08:00", "20:00"]
+      }
+    }
+  ],
+  "ambientes": [
+    {
+      "id": "AMB-T1",
+      "loja_id": "LOJA-T-SP",
+      "nome": "Salão",
+      "faixa_conforto_c": {
+        "min": 21,
+        "max": 25
+      },
+      "horario_funcionamento": {
+        "seg": ["09:00", "18:00"],
+        "ter": ["09:00", "18:00"],
+        "qua": ["09:00", "18:00"],
+        "qui": ["09:00", "18:00"],
+        "sex": ["09:00", "18:00"],
+        "sab": ["09:00", "18:00"],
+        "dom": null
+      },
+      "dev_id": "DEV-A"
+    },
+    {
+      "id": "AMB-T2",
+      "loja_id": "LOJA-T-SP",
+      "nome": "Sala técnica",
+      "faixa_conforto_c": {
+        "min": 18,
+        "max": 24
+      },
+      "horario_funcionamento": {
+        "seg": ["00:00", "24:00"],
+        "ter": ["00:00", "24:00"],
+        "qua": ["00:00", "24:00"],
+        "qui": ["00:00", "24:00"],
+        "sex": ["00:00", "24:00"],
+        "sab": ["00:00", "24:00"],
+        "dom": ["00:00", "24:00"]
+      },
+      "dev_id": "DEV-B"
+    },
+    {
+      "id": "AMB-T3",
+      "loja_id": "LOJA-T-PE",
+      "nome": "Atendimento",
+      "faixa_conforto_c": {
+        "min": 21,
+        "max": 24
+      },
+      "horario_funcionamento": {
+        "seg": ["08:00", "20:00"],
+        "ter": ["08:00", "20:00"],
+        "qua": ["08:00", "20:00"],
+        "qui": ["08:00", "20:00"],
+        "sex": ["08:00", "20:00"],
+        "sab": ["08:00", "20:00"],
+        "dom": ["08:00", "20:00"]
+      },
+      "dev_id": "DEV-C"
+    }
+  ],
+  "usuarios": [
+    {
+      "id": "USR-T1",
+      "nome": "Admin Teste",
+      "email": "admin@teste.example",
+      "perfil": "admin_diel",
+      "cliente_id": null,
+      "lojas": null
+    },
+    {
+      "id": "USR-T2",
+      "nome": "Gestor Teste",
+      "email": "gestor@teste.example",
+      "perfil": "gestor_cliente",
+      "cliente_id": "CLI-T1",
+      "lojas": null
+    },
+    {
+      "id": "USR-T3",
+      "nome": "Gerente Teste",
+      "email": "gerente@teste.example",
+      "perfil": "gerente_loja",
+      "cliente_id": "CLI-T2",
+      "lojas": ["LOJA-T-PE"]
+    }
+  ]
+}
