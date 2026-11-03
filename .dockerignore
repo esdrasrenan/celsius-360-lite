@@ -1,0 +1,15 @@
+**/node_modules
+**/dist
+.git
+.github
+.claude
+dados
+test
+docs
+coverage
+**/*.log
+.tmp*
+**/playwright-report
+**/test-results
+.env
+.env.*

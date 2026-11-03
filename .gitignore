@@ -1,0 +1,19 @@
+node_modules/
+dist/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+
+# Dados do desafio: material do processo seletivo, não versionado (veja o README)
+dados/*
+!dados/.gitkeep
+
+# Artefatos de teste
+apps/web/playwright-report/
+apps/web/test-results/
+.tmp/
+
+# Arquivos temporários de diagnóstico
+.tmp*

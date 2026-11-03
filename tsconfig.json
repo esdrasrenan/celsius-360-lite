@@ -1,0 +1,9 @@
+{
+  // Lido pelo Bun quando um processo parte da raiz: os decorators do NestJS precisam do modo legado
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  },
+  "files": []
+}
