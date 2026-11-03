@@ -1,0 +1,1370 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/api/v1/auth/login": {
+      "post": {
+        "operationId": "AuthController_login_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionUserDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "E-mail ou senha incorretos"
+          },
+          "429": {
+            "description": "Cinco falhas seguidas bloqueiam o e-mail por 5 minutos"
+          }
+        },
+        "summary": "Entra com um usuário do cadastro e recebe o cookie de sessão (httpOnly)",
+        "tags": [
+          "Sessão"
+        ]
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "operationId": "AuthController_logout_v1",
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "Encerra a sessão",
+        "tags": [
+          "Sessão"
+        ]
+      }
+    },
+    "/api/v1/auth/demo-users": {
+      "get": {
+        "operationId": "AuthController_demoUsers_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DemoUserDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Usuários de demonstração (só com DEMO_MODE=true): e-mail, perfil e alcance, sem senha",
+        "tags": [
+          "Sessão"
+        ]
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "operationId": "AuthController_me_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionUserDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sem sessão válida"
+          }
+        },
+        "security": [
+          {
+            "celsius_session": []
+          }
+        ],
+        "summary": "Usuário da sessão e o escopo de lojas que ele enxerga",
+        "tags": [
+          "Sessão"
+        ]
+      }
+    },
+    "/api/v1/stores": {
+      "get": {
+        "description": "Cada loja traz seus ambientes (status, situação agora e conforto do período). O resultado respeita o escopo do usuário: gestor vê as lojas do cliente; gerente, só as suas.",
+        "operationId": "StoresController_list_v1",
+        "parameters": [
+          {
+            "name": "period",
+            "required": false,
+            "in": "query",
+            "description": "Período dos indicadores de conforto",
+            "schema": {
+              "default": "1d",
+              "type": "string",
+              "enum": [
+                "1d",
+                "7d",
+                "30d"
+              ]
+            }
+          },
+          {
+            "name": "search",
+            "required": false,
+            "in": "query",
+            "description": "Busca por nome da loja, cidade ou cliente (sem acento)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "clientId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": "CLI-001",
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "description": "Um ou mais status, separados por vírgula",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "online",
+                  "degraded",
+                  "offline",
+                  "no_data"
+                ]
+              }
+            }
+          },
+          {
+            "name": "sort",
+            "required": false,
+            "in": "query",
+            "description": "status: mais grave primeiro; comfort: pior conforto primeiro; comfort_desc: melhor primeiro; out_of_range: mais ambientes fora da faixa agora; name: alfabética",
+            "schema": {
+              "default": "status",
+              "type": "string",
+              "enum": [
+                "status",
+                "comfort",
+                "comfort_desc",
+                "out_of_range",
+                "name"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "default": 1,
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/Object"
+                }
+              ]
+            }
+          },
+          {
+            "name": "pageSize",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20,
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/Object"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreListDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "celsius_session": []
+          }
+        ],
+        "summary": "Lojas com status e indicadores do período, com filtros, ordenação e paginação",
+        "tags": [
+          "Rede"
+        ]
+      }
+    },
+    "/api/v1/clients": {
+      "get": {
+        "operationId": "StoresController_clients_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ClientListItemDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "celsius_session": []
+          }
+        ],
+        "summary": "Clientes visíveis para o usuário (para o filtro da visão da rede)",
+        "tags": [
+          "Rede"
+        ]
+      }
+    },
+    "/api/v1/environments/{id}/summary": {
+      "get": {
+        "description": "Use period (1d, 7d, 30d) ou um intervalo from/to. Os indicadores vêm dos agregados contínuos.",
+        "operationId": "EnvironmentsController_summary_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "example": "AMB-003",
+              "type": "string"
+            }
+          },
+          {
+            "name": "period",
+            "required": false,
+            "in": "query",
+            "description": "Período terminando em \"agora\"",
+            "schema": {
+              "default": "1d",
+              "type": "string",
+              "enum": [
+                "1d",
+                "7d",
+                "30d"
+              ]
+            }
+          },
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "description": "Início do intervalo (ISO 8601). Junto com \"to\", substitui o período",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "description": "Fim do intervalo (ISO 8601)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentSummaryDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Ambiente inexistente ou fora do escopo do usuário"
+          }
+        },
+        "security": [
+          {
+            "celsius_session": []
+          }
+        ],
+        "summary": "Resumo do ambiente: cadastro, status agora e indicadores do período",
+        "tags": [
+          "Ambientes"
+        ]
+      }
+    },
+    "/api/v1/environments/{id}/series": {
+      "get": {
+        "description": "Traz média, mínima e máxima por bucket, lacunas e indisponibilidades, temperatura externa e o horário de funcionamento.",
+        "operationId": "EnvironmentsController_series_v1",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "example": "AMB-003",
+              "type": "string"
+            }
+          },
+          {
+            "name": "period",
+            "required": false,
+            "in": "query",
+            "description": "Período terminando em \"agora\"",
+            "schema": {
+              "default": "1d",
+              "type": "string",
+              "enum": [
+                "1d",
+                "7d",
+                "30d"
+              ]
+            }
+          },
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "description": "Início do intervalo (ISO 8601). Junto com \"to\", substitui o período",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "description": "Fim do intervalo (ISO 8601)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "bucket",
+            "required": false,
+            "in": "query",
+            "description": "auto escolhe pelo tamanho do intervalo: até 8 h, 30 s; até 3,5 dias, 5 min; até 10 dias, 15 min; acima, 1 h",
+            "schema": {
+              "default": "auto",
+              "type": "string",
+              "enum": [
+                "auto",
+                "raw",
+                "5m",
+                "15m",
+                "1h"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Ambiente inexistente ou fora do escopo do usuário"
+          }
+        },
+        "security": [
+          {
+            "celsius_session": []
+          }
+        ],
+        "summary": "Série de temperatura do ambiente num intervalo, com agregação adequada ao tamanho do intervalo",
+        "tags": [
+          "Ambientes"
+        ]
+      }
+    },
+    "/api/v1/events": {
+      "get": {
+        "description": "Evento \"state_updated\" com o novo \"agora\" e as lojas afetadas (só as do escopo do usuário). Um \"ping\" a cada 15 s mantém a conexão aberta através de proxies.",
+        "operationId": "EventsController_stream_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "text/event-stream"
+          }
+        },
+        "security": [
+          {
+            "celsius_session": []
+          }
+        ],
+        "summary": "Server-Sent Events: avisa quando a ingestão atualiza o estado das lojas",
+        "tags": [
+          "Tempo real"
+        ]
+      }
+    },
+    "/health/live": {
+      "get": {
+        "operationId": "OpsController_live",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Liveness: o processo responde",
+        "tags": [
+          "Operação"
+        ]
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "operationId": "OpsController_ready",
+        "parameters": [],
+        "responses": {
+          "503": {
+            "description": "Banco indisponível ou não migrado"
+          }
+        },
+        "summary": "Readiness: banco acessível e migrado; informa o \"agora\" da ingestão",
+        "tags": [
+          "Operação"
+        ]
+      }
+    },
+    "/metrics": {
+      "get": {
+        "operationId": "OpsController_metricsText",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Métricas no formato Prometheus (latência por rota, processo)",
+        "tags": [
+          "Operação"
+        ]
+      }
+    },
+    "/api/v1/quality": {
+      "get": {
+        "description": "Gerado pela ingestão a partir do ClickHouse (cru) e do TimescaleDB (série). Só administrador da Diel.",
+        "operationId": "QualityController_quality_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Pacotes, dispositivos, amostras descartadas, sensor travado e lacunas"
+          },
+          "403": {
+            "description": "Perfil sem acesso"
+          }
+        },
+        "security": [
+          {
+            "celsius_session": []
+          }
+        ],
+        "summary": "Relatório de qualidade da telemetria: o que chegou no dado cru e como foi tratado",
+        "tags": [
+          "Operação"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Celsius 360 Lite",
+    "description": "API da versão reduzida do Celsius 360: visão da rede de lojas, detalhe de ambientes, tempo real e operação. \"Agora\" é sempre o horário do último pacote processado pela ingestão.",
+    "version": "1.0",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "securitySchemes": {
+      "cookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "celsius_session"
+      }
+    },
+    "schemas": {
+      "LoginDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "example": "ana.ribeiro@diel.example"
+          },
+          "password": {
+            "type": "string",
+            "description": "Senha de demonstração (DEMO_PASSWORD ou a gerada no seed)"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ]
+      },
+      "SessionUserDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "USR-002"
+          },
+          "name": {
+            "type": "string",
+            "example": "Carlos Mendes"
+          },
+          "email": {
+            "type": "string",
+            "example": "carlos.mendes@modacarioca.example"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "admin_diel",
+              "gestor_cliente",
+              "gerente_loja"
+            ]
+          },
+          "clientId": {
+            "type": "string",
+            "nullable": true,
+            "example": "CLI-001"
+          },
+          "allStores": {
+            "type": "boolean",
+            "description": "Vê todas as lojas (administrador da Diel)"
+          },
+          "storeIds": {
+            "description": "Lojas visíveis quando allStores é falso",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "email",
+          "role",
+          "allStores",
+          "storeIds"
+        ]
+      },
+      "DemoUserDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "example": "juliana.prado@modacarioca.example"
+          },
+          "name": {
+            "type": "string",
+            "example": "Juliana Prado"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "admin_diel",
+              "gestor_cliente",
+              "gerente_loja"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "example": "Loja Paulista"
+          }
+        },
+        "required": [
+          "email",
+          "name",
+          "role",
+          "scope"
+        ]
+      },
+      "Object": {
+        "type": "object",
+        "properties": {}
+      },
+      "ClientRefDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "CLI-001"
+          },
+          "name": {
+            "type": "string",
+            "example": "Moda Carioca"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "StoreEnvironmentCountsDto": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number"
+          },
+          "online": {
+            "type": "number"
+          },
+          "sensorFault": {
+            "type": "number"
+          },
+          "offline": {
+            "type": "number"
+          },
+          "noData": {
+            "type": "number"
+          },
+          "outOfRange": {
+            "type": "number",
+            "description": "Ambientes fora da faixa agora, dentro do horário de funcionamento"
+          },
+          "belowTarget": {
+            "type": "number",
+            "description": "Ambientes com conforto no período abaixo da meta (90%)"
+          }
+        },
+        "required": [
+          "total",
+          "online",
+          "sensorFault",
+          "offline",
+          "noData",
+          "outOfRange",
+          "belowTarget"
+        ]
+      },
+      "ComfortRangeDto": {
+        "type": "object",
+        "properties": {
+          "min": {
+            "type": "number",
+            "example": 21
+          },
+          "max": {
+            "type": "number",
+            "example": 25
+          }
+        },
+        "required": [
+          "min",
+          "max"
+        ]
+      },
+      "EnvironmentListItemDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "AMB-001"
+          },
+          "name": {
+            "type": "string",
+            "example": "Salão de vendas - Vitrine"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "online",
+              "sensor_fault",
+              "offline",
+              "no_data"
+            ]
+          },
+          "situation": {
+            "type": "string",
+            "enum": [
+              "within",
+              "above",
+              "below",
+              "closed",
+              "unknown"
+            ],
+            "description": "Situação agora: dentro, acima ou abaixo da faixa, fora do horário ou desconhecida"
+          },
+          "lastValue": {
+            "type": "number",
+            "nullable": true,
+            "example": 23.4,
+            "description": "Última leitura válida, °C"
+          },
+          "lastValidAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "comfortRange": {
+            "$ref": "#/components/schemas/ComfortRangeDto"
+          },
+          "comfortPct": {
+            "type": "number",
+            "nullable": true,
+            "description": "% do horário de funcionamento dentro da faixa no período"
+          },
+          "coveragePct": {
+            "type": "number",
+            "nullable": true,
+            "description": "% do horário de funcionamento com leitura válida"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "status",
+          "situation",
+          "comfortRange"
+        ]
+      },
+      "StoreListItemDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "LOJA-RJ-001"
+          },
+          "name": {
+            "type": "string",
+            "example": "Loja Tijuca"
+          },
+          "kind": {
+            "type": "string",
+            "example": "loja de rua"
+          },
+          "city": {
+            "type": "string",
+            "example": "Rio de Janeiro"
+          },
+          "state": {
+            "type": "string",
+            "example": "RJ"
+          },
+          "client": {
+            "$ref": "#/components/schemas/ClientRefDto"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "online",
+              "degraded",
+              "offline",
+              "no_data"
+            ]
+          },
+          "environmentCounts": {
+            "$ref": "#/components/schemas/StoreEnvironmentCountsDto"
+          },
+          "comfortPct": {
+            "type": "number",
+            "nullable": true
+          },
+          "coveragePct": {
+            "type": "number",
+            "nullable": true
+          },
+          "environments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentListItemDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "city",
+          "state",
+          "client",
+          "status",
+          "environmentCounts",
+          "environments"
+        ]
+      },
+      "NetworkTotalsDto": {
+        "type": "object",
+        "properties": {
+          "stores": {
+            "type": "number"
+          },
+          "environments": {
+            "type": "number"
+          },
+          "online": {
+            "type": "number"
+          },
+          "sensorFault": {
+            "type": "number"
+          },
+          "offline": {
+            "type": "number"
+          },
+          "noData": {
+            "type": "number"
+          },
+          "outOfRange": {
+            "type": "number"
+          },
+          "belowTarget": {
+            "type": "number"
+          },
+          "comfortPct": {
+            "type": "number",
+            "nullable": true
+          }
+        },
+        "required": [
+          "stores",
+          "environments",
+          "online",
+          "sensorFault",
+          "offline",
+          "noData",
+          "outOfRange",
+          "belowTarget"
+        ]
+      },
+      "PeriodDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "1d",
+              "7d",
+              "30d"
+            ],
+            "nullable": true
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ]
+      },
+      "StoreListDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StoreListItemDto"
+            }
+          },
+          "page": {
+            "type": "number"
+          },
+          "pageSize": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          },
+          "totals": {
+            "description": "Totais de todas as lojas do filtro, não só da página",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/NetworkTotalsDto"
+              }
+            ]
+          },
+          "now": {
+            "type": "string",
+            "nullable": true,
+            "description": "\"Agora\": horário do último pacote processado"
+          },
+          "period": {
+            "$ref": "#/components/schemas/PeriodDto"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "pageSize",
+          "total",
+          "totals",
+          "period"
+        ]
+      },
+      "ClientListItemDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "CLI-001"
+          },
+          "name": {
+            "type": "string",
+            "example": "Moda Carioca"
+          },
+          "stores": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "stores"
+        ]
+      },
+      "EnvironmentInfoDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "AMB-003"
+          },
+          "name": {
+            "type": "string",
+            "example": "Provadores"
+          },
+          "comfortRange": {
+            "$ref": "#/components/schemas/ComfortRangeDto"
+          },
+          "openingHours": {
+            "type": "object",
+            "description": "Horário de funcionamento por dia, como no cadastro",
+            "example": {
+              "seg": [
+                "09:00",
+                "20:00"
+              ],
+              "dom": null
+            }
+          },
+          "deviceId": {
+            "type": "string",
+            "nullable": true,
+            "example": "IOT003"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "comfortRange",
+          "openingHours"
+        ]
+      },
+      "StoreRefDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "LOJA-RJ-001"
+          },
+          "name": {
+            "type": "string",
+            "example": "Loja Tijuca"
+          },
+          "city": {
+            "type": "string",
+            "example": "Rio de Janeiro"
+          },
+          "state": {
+            "type": "string",
+            "example": "RJ"
+          },
+          "timezone": {
+            "type": "string",
+            "example": "America/Sao_Paulo"
+          },
+          "client": {
+            "$ref": "#/components/schemas/ClientRefDto"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "city",
+          "state",
+          "timezone",
+          "client"
+        ]
+      },
+      "EnvironmentStatusDto": {
+        "type": "object",
+        "properties": {
+          "device": {
+            "type": "string",
+            "enum": [
+              "online",
+              "sensor_fault",
+              "offline",
+              "no_data"
+            ]
+          },
+          "situation": {
+            "type": "string",
+            "enum": [
+              "within",
+              "above",
+              "below",
+              "closed",
+              "unknown"
+            ]
+          },
+          "lastValue": {
+            "type": "number",
+            "nullable": true
+          },
+          "lastValidAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastContactAt": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "device",
+          "situation"
+        ]
+      },
+      "DiscardedDto": {
+        "type": "object",
+        "properties": {
+          "sensorError": {
+            "type": "number",
+            "description": "Códigos de erro do sensor (-127 e 85)"
+          },
+          "outOfRange": {
+            "type": "number"
+          },
+          "spike": {
+            "type": "number"
+          },
+          "stuck": {
+            "type": "number",
+            "description": "Sensor travado (valor idêntico por 60 min ou mais)"
+          }
+        },
+        "required": [
+          "sensorError",
+          "outOfRange",
+          "spike",
+          "stuck"
+        ]
+      },
+      "IndicatorsDto": {
+        "type": "object",
+        "properties": {
+          "comfortPct": {
+            "type": "number",
+            "nullable": true,
+            "description": "% do horário de funcionamento dentro da faixa"
+          },
+          "abovePct": {
+            "type": "number",
+            "nullable": true
+          },
+          "belowPct": {
+            "type": "number",
+            "nullable": true
+          },
+          "coveragePct": {
+            "type": "number",
+            "nullable": true,
+            "description": "% do horário de funcionamento com leitura válida"
+          },
+          "minutesInHours": {
+            "type": "number",
+            "description": "Minutos de funcionamento com leitura válida"
+          },
+          "minutesWithin": {
+            "type": "number"
+          },
+          "minutesAbove": {
+            "type": "number"
+          },
+          "minutesBelow": {
+            "type": "number"
+          },
+          "valueAvg": {
+            "type": "number",
+            "nullable": true
+          },
+          "valueMin": {
+            "type": "number",
+            "nullable": true
+          },
+          "valueMax": {
+            "type": "number",
+            "nullable": true
+          },
+          "samplesDiscarded": {
+            "type": "number",
+            "description": "Amostras descartadas no período"
+          },
+          "discarded": {
+            "$ref": "#/components/schemas/DiscardedDto"
+          },
+          "gapCount": {
+            "type": "number",
+            "description": "Trechos de 10 min ou mais sem leitura válida"
+          },
+          "gapMinutes": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "minutesInHours",
+          "minutesWithin",
+          "minutesAbove",
+          "minutesBelow",
+          "samplesDiscarded",
+          "discarded",
+          "gapCount",
+          "gapMinutes"
+        ]
+      },
+      "EnvironmentSummaryDto": {
+        "type": "object",
+        "properties": {
+          "environment": {
+            "$ref": "#/components/schemas/EnvironmentInfoDto"
+          },
+          "store": {
+            "$ref": "#/components/schemas/StoreRefDto"
+          },
+          "status": {
+            "$ref": "#/components/schemas/EnvironmentStatusDto"
+          },
+          "period": {
+            "$ref": "#/components/schemas/PeriodDto"
+          },
+          "indicators": {
+            "$ref": "#/components/schemas/IndicatorsDto"
+          },
+          "now": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "environment",
+          "store",
+          "status",
+          "period",
+          "indicators"
+        ]
+      },
+      "SeriesPointDto": {
+        "type": "object",
+        "properties": {
+          "t": {
+            "type": "string",
+            "description": "Início do bucket (ou instante da amostra)"
+          },
+          "avg": {
+            "type": "number",
+            "nullable": true,
+            "description": "Média; nulo quando não há leitura válida"
+          },
+          "min": {
+            "type": "number",
+            "nullable": true
+          },
+          "max": {
+            "type": "number",
+            "nullable": true
+          }
+        },
+        "required": [
+          "t"
+        ]
+      },
+      "OutdoorPointDto": {
+        "type": "object",
+        "properties": {
+          "t": {
+            "type": "string"
+          },
+          "value": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "t",
+          "value"
+        ]
+      },
+      "GapDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "no_data",
+              "invalid"
+            ],
+            "description": "no_data: sem pacotes; invalid: só leituras descartadas"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "sensor_error",
+              "out_of_range",
+              "spike",
+              "stuck"
+            ]
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "kind"
+        ]
+      },
+      "IntervalDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ]
+      },
+      "SeriesDto": {
+        "type": "object",
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "enum": [
+              "raw",
+              "5m",
+              "15m",
+              "1h"
+            ]
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "now": {
+            "type": "string",
+            "nullable": true
+          },
+          "comfortRange": {
+            "$ref": "#/components/schemas/ComfortRangeDto"
+          },
+          "points": {
+            "description": "Série densa: buckets sem dado vêm com avg nulo",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesPointDto"
+            }
+          },
+          "outdoor": {
+            "description": "Temperatura externa horária (Open-Meteo)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OutdoorPointDto"
+            }
+          },
+          "gaps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GapDto"
+            }
+          },
+          "openIntervals": {
+            "description": "Horário de funcionamento dentro do intervalo",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IntervalDto"
+            }
+          }
+        },
+        "required": [
+          "bucket",
+          "from",
+          "to",
+          "comfortRange",
+          "points",
+          "outdoor",
+          "gaps",
+          "openIntervals"
+        ]
+      }
+    }
+  }
+}
