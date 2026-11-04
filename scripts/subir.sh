@@ -155,7 +155,15 @@ else
     port=$(setting "$name" "${pair#*:}")
     port_in_use "$port"
     case $? in
-      0) busy=$((busy + 1)); check erro "A porta $port ($name) já está em uso. Feche o programa ou contêiner que a usa (docker ps lista os contêineres) ou troque a porta no .env, por exemplo $name=$((port + 1))." ;;
+      0)
+        busy=$((busy + 1))
+        next="$name=$((port + 1))"
+        if [ "$check_only" = true ] && [ ! -f .env ]; then
+          change="troque a porta no .env, que a subida sem --so-verificar cria ($next)"
+        else
+          change="troque a porta no .env: echo $next >> .env"
+        fi
+        check erro "A porta $port ($name) já está em uso. Feche o programa ou contêiner que a usa (docker ps lista os contêineres) ou $change." ;;
       1) free_ports="$free_ports${free_ports:+, }$port" ;;
       *) unchecked=true ;;
     esac
@@ -165,6 +173,23 @@ else
   elif [ "$busy" -eq 0 ]; then
     check ok "Portas livres: $free_ports"
   fi
+fi
+
+# Criado antes de conferir os erros: se o script mandar trocar uma porta no .env, ele já existe,
+# com a senha aleatória (um .env feito à mão deixaria a senha só no log do setup)
+generated_password=''
+if [ "$check_only" != true ] && [ ! -f .env ]; then
+  password_part=''
+  if [ -z "$demo_password" ]; then
+    generated_password=$(LC_ALL=C tr -dc A-Za-z0-9 </dev/urandom | head -c 16)
+    sed "s/^DEMO_PASSWORD=.*/DEMO_PASSWORD=$generated_password/" .env.example > .env
+    password_part=', com uma senha aleatória em DEMO_PASSWORD'
+  else
+    cp .env.example .env
+  fi
+  if [ -n "$telemetry_override" ]; then printf 'TELEMETRY_FILE=%s\n' "$telemetry_override" >> .env; fi
+  env_readable=true
+  check ok ".env criado a partir do .env.example$password_part"
 fi
 
 printf '\n'
@@ -177,20 +202,7 @@ if [ "$check_only" = true ]; then
   exit 0
 fi
 
-generated_password=''
-if [ ! -f .env ]; then
-  if [ -z "$demo_password" ]; then
-    generated_password=$(LC_ALL=C tr -dc A-Za-z0-9 </dev/urandom | head -c 16)
-    sed "s/^DEMO_PASSWORD=.*/DEMO_PASSWORD=$generated_password/" .env.example > .env
-  else
-    cp .env.example .env
-  fi
-  if [ -n "$telemetry_override" ]; then printf 'TELEMETRY_FILE=%s\n' "$telemetry_override" >> .env; fi
-  env_readable=true
-  check ok '.env criado a partir do .env.example'
-fi
-
-printf '%sSubindo com docker compose up -d --build. Na primeira vez são cerca de 1 GB de download e de 3 a 6 min de build.%s\n' "$cyan" "$reset"
+printf '%sSubindo com docker compose up -d --build. Na primeira vez são cerca de 1 GB de download e de 3 a 6 min até o quadro final, com a ingestão.%s\n' "$cyan" "$reset"
 if ! docker compose up -d --build; then
   printf '\n%sA subida falhou.%s\n' "$red" "$reset"
   setup_id=$(docker compose ps -a -q setup 2>/dev/null | head -n 1)
@@ -239,7 +251,11 @@ if [ -n "$ingest_id" ]; then
   summary=$(docker compose logs --no-log-prefix --tail 30 ingest 2>/dev/null | grep '"seconds":' | tail -n 1)
   packets=$(printf '%s' "$summary" | sed -n 's/.*"packets":\([0-9][0-9]*\).*/\1/p')
   seconds=$(printf '%s' "$summary" | sed -n 's/.*"seconds":\([0-9.][0-9.]*\).*/\1/p')
-  if [ -n "$packets" ]; then check ok "Ingestão concluída: $packets pacotes em $seconds s"; fi
+  if [ "$packets" = 0 ]; then
+    check ok 'Ingestão em dia: nada novo desde a última subida'
+  elif [ -n "$packets" ]; then
+    check ok "Ingestão concluída: $packets pacotes em $seconds s"
+  fi
 fi
 
 if [ -n "$generated_password" ]; then

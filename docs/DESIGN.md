@@ -40,7 +40,7 @@ O âmbar do alerta e o laranja do quente colidem para quem tem deuteranopia (ΔE
 
 ### Contraste verificado
 
-`apps/web/src/estilo/contraste.test.ts` lê o `styles.css`, resolve os tokens e confere a fórmula do WCAG 2: 4,5:1 para texto, 3:1 para objeto gráfico e borda de controle. Alguns pares:
+`apps/web/src/styles/contrast.test.ts` lê o `styles.css`, resolve os tokens e confere a fórmula do WCAG 2: 4,5:1 para texto, 3:1 para objeto gráfico e borda de controle. Alguns pares:
 
 | Par                                                   | Razão                                                 |
 | ----------------------------------------------------- | ----------------------------------------------------- |
@@ -111,20 +111,20 @@ Nunca vai em número, texto de dado ou série do gráfico.
 
 Os primitivos com teclado, foco e ARIA vêm do [Base UI](https://base-ui.com) 1.9 (versão exata). O visual é todo nosso, sobre os tokens:
 
-| Componente         | Base             | Detalhe                                                                                         |
-| ------------------ | ---------------- | ----------------------------------------------------------------------------------------------- |
-| `Select`           | Base UI Select   | Chevron a 12 px da borda, prefixo ("Ordenar por") e texto auxiliar à direita.                   |
-| `Combobox`         | Base UI Combobox | Busca sem acento. Entra no lugar do Select de cliente quando há mais de 7 clientes.             |
-| `Hint`             | Base UI Tooltip  | Complementa: informação essencial nunca fica só na dica.                                        |
-| `TruncatedText`    | —                | Mostra a dica só quando o texto foi cortado.                                                    |
-| `Definition`       | Base UI Popover  | Fórmula dos indicadores, com hover e toque.                                                     |
-| `Menu`             | Base UI Menu     | Exportação e menu do usuário.                                                                   |
-| `Sheet`            | Base UI Dialog   | Gaveta de filtros no celular.                                                                   |
-| `SegmentedControl` | rádios nativos   | Período, com pré-carga no hover.                                                                |
-| `Kpi`              | —                | Rótulo, definição, valor com unidade, contexto e chip de variação; variante que filtra a lista. |
-| `ComfortBar`       | —                | Na faixa, abaixo e acima, com a marca da meta e o aviso de cobertura baixa.                     |
-| `EmptyState`       | —                | Sempre com o próximo passo.                                                                     |
-| `ErrorState`       | —                | Mensagem em português por status, "Tentar de novo" e o `requestId` para copiar.                 |
+| Componente         | Base             | Detalhe                                                                                           |
+| ------------------ | ---------------- | ------------------------------------------------------------------------------------------------- |
+| `Select`           | Base UI Select   | Chevron a 12 px da borda, prefixo ("Ordenar por") e texto auxiliar à direita.                     |
+| `Combobox`         | Base UI Combobox | Busca sem acento. Entra no lugar do Select de cliente quando há mais de 7 clientes.               |
+| `Hint`             | Base UI Tooltip  | Complementa: informação essencial nunca fica só na dica.                                          |
+| `TruncatedText`    | —                | Mostra a dica só quando o texto foi cortado. Com `wrapOnMobile`, quebra a linha abaixo de 768 px. |
+| `Definition`       | Base UI Popover  | Fórmula dos indicadores, com hover e toque.                                                       |
+| `Menu`             | Base UI Menu     | Exportação e menu do usuário.                                                                     |
+| `Sheet`            | Base UI Dialog   | Gaveta de filtros no celular.                                                                     |
+| `SegmentedControl` | rádios nativos   | Período, com pré-carga no hover.                                                                  |
+| `Kpi`              | —                | Rótulo, definição, valor com unidade e contexto; variante que filtra a lista.                     |
+| `ComfortBar`       | —                | Na faixa, abaixo e acima, com a marca da meta e o aviso de cobertura baixa.                       |
+| `EmptyState`       | —                | Sempre com o próximo passo.                                                                       |
+| `ErrorState`       | —                | Mensagem em português por status, "Tentar de novo" e o `requestId` para copiar.                   |
 
 ## Gráfico de temperatura
 
@@ -147,6 +147,6 @@ Os ticks do eixo são calculados no fuso da loja, não no do navegador. O zoom s
 | Comando                        | O que garante                                                                                                                                                                                   |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `bun run lint:ui`              | Reprova o front se encontrar qualquer um destes: valor arbitrário do Tailwind (`text-[13px]`), cor fora do `styles.css`, `uppercase`, atributo `title`, `<select>` nativo ou `transition: all`. |
-| `bun test apps/web/src/estilo` | Contraste dos pares da tabela acima.                                                                                                                                                            |
+| `bun test apps/web/src/styles` | Contraste dos pares da tabela acima.                                                                                                                                                            |
 | `bun test apps/web/src/lib`    | Formatação de números, durações, datas e plurais.                                                                                                                                               |
-| `bun run test:e2e`             | Em 320, 390 e 1440 px: sem rolagem horizontal, sem texto abaixo de 12 px, sem caixa alta e sem `title`.                                                                                         |
+| `bun run test:e2e`             | Em 320, 390, 768, 820 e 1440 px: sem rolagem horizontal, sem texto abaixo de 12 px, sem caixa alta e sem `title`.                                                                               |

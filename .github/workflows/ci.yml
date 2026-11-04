@@ -41,6 +41,20 @@ jobs:
         env:
           DATA_PATH: ./test/fixtures/e2e
         run: sh scripts/subir.sh --so-verificar
+      - name: Com uma porta ocupada, sh scripts/subir.sh falha e já deixa o .env com a senha
+        env:
+          DATA_PATH: ./test/fixtures/e2e
+        run: |
+          rm -f .env
+          python3 -m http.server 8080 --bind 127.0.0.1 > /dev/null 2>&1 &
+          server=$!
+          for i in 1 2 3 4 5 6 7 8 9 10; do bash -c ': > /dev/tcp/127.0.0.1/8080' 2> /dev/null && break; sleep 1; done
+          status=0
+          sh scripts/subir.sh || status=$?
+          kill "$server"
+          if [ "$status" -ne 1 ]; then echo "::error::com a 8080 ocupada o script devia sair com 1 (saiu com $status)"; exit 1; fi
+          grep -Eq '^DEMO_PASSWORD=[A-Za-z0-9]{16}$' .env || { echo "::error::faltou a senha gerada no .env"; exit 1; }
+          rm .env
 
   windows:
     name: Windows (PowerShell 5.1)
@@ -67,6 +81,19 @@ jobs:
           Move-Item dados\dados\* dados\
           Remove-Item dados\dados
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts\subir.ps1 -SoVerificar
+      - name: Com uma porta ocupada, scripts\subir.ps1 falha e já deixa o .env com a senha
+        shell: powershell
+        run: |
+          [Console]::OutputEncoding = [Text.Encoding]::UTF8
+          $listener = New-Object Net.Sockets.TcpListener ([Net.IPAddress]::Loopback, 8080)
+          $listener.Start()
+          try {
+            powershell -NoProfile -ExecutionPolicy Bypass -File scripts\subir.ps1
+            $status = $LASTEXITCODE
+          } finally { $listener.Stop() }
+          if ($status -ne 1) { throw "com a 8080 ocupada o script devia sair com 1 (saiu com $status)" }
+          if (-not (Select-String -LiteralPath .env -Pattern '^DEMO_PASSWORD=[A-Za-z0-9]{16}$' -Quiet)) { throw 'faltou a senha gerada no .env' }
+          Remove-Item .env
       - name: PSScriptAnalyzer
         shell: powershell
         run: |

@@ -168,11 +168,30 @@ try {
     foreach ($name in $defaultPorts.Keys) { $ports[$name] = [int](Get-Setting $name $defaultPorts[$name]) }
     $busy = @($defaultPorts.Keys | Where-Object { Test-PortInUse $ports[$_] })
     foreach ($name in $busy) {
-      Write-Check erro "A porta $($ports[$name]) ($name) já está em uso. Feche o programa ou contêiner que a usa (docker ps lista os contêineres) ou troque a porta no .env, por exemplo $name=$($ports[$name] + 1)."
+      $next = "$name=$($ports[$name] + 1)"
+      # Add-Content com -Encoding ascii: o ">" do 5.1 gravaria UTF-16, que o Compose não lê
+      $change = if ($SoVerificar -and -not (Test-Path -LiteralPath $envFile)) { "troque a porta no .env, que a subida sem -SoVerificar cria ($next)" }
+        else { "troque a porta no .env: Add-Content .env $next -Encoding ascii" }
+      Write-Check erro "A porta $($ports[$name]) ($name) já está em uso. Feche o programa ou contêiner que a usa (docker ps lista os contêineres) ou $change."
     }
     if ($busy.Count -eq 0) {
       Write-Check ok ('Portas livres: ' + (($defaultPorts.Keys | ForEach-Object { $ports[$_] }) -join ', '))
     }
+  }
+
+  # Criado antes de conferir os erros: se o script mandar trocar uma porta no .env, ele já existe,
+  # com a senha aleatória (um .env feito à mão deixaria a senha só no log do setup)
+  $generatedPassword = $null
+  if (-not $SoVerificar -and -not (Test-Path -LiteralPath $envFile)) {
+    $lines = @(Get-Content -LiteralPath (Join-Path $root '.env.example'))
+    if (-not $demoPassword) {
+      $generatedPassword = Get-RandomPassword
+      $lines = @($lines | ForEach-Object { if ($_ -match '^DEMO_PASSWORD=') { "DEMO_PASSWORD=$generatedPassword" } else { $_ } })
+    }
+    if ($telemetryOverride) { $lines += "TELEMETRY_FILE=$telemetryOverride" }
+    Set-Content -LiteralPath $envFile -Value $lines -Encoding ascii
+    $passwordPart = if ($generatedPassword) { ', com uma senha aleatória em DEMO_PASSWORD' } else { '' }
+    Write-Check ok ".env criado a partir do .env.example$passwordPart"
   }
 
   Write-Host ''
@@ -185,19 +204,7 @@ try {
     exit 0
   }
 
-  $generatedPassword = $null
-  if (-not (Test-Path -LiteralPath $envFile)) {
-    $lines = @(Get-Content -LiteralPath (Join-Path $root '.env.example'))
-    if (-not $demoPassword) {
-      $generatedPassword = Get-RandomPassword
-      $lines = @($lines | ForEach-Object { if ($_ -match '^DEMO_PASSWORD=') { "DEMO_PASSWORD=$generatedPassword" } else { $_ } })
-    }
-    if ($telemetryOverride) { $lines += "TELEMETRY_FILE=$telemetryOverride" }
-    Set-Content -LiteralPath $envFile -Value $lines -Encoding ascii
-    Write-Check ok '.env criado a partir do .env.example'
-  }
-
-  Write-Host 'Subindo com docker compose up -d --build. Na primeira vez são cerca de 1 GB de download e de 3 a 6 min de build.' -ForegroundColor Cyan
+  Write-Host 'Subindo com docker compose up -d --build. Na primeira vez são cerca de 1 GB de download e de 3 a 6 min até o quadro final, com a ingestão.' -ForegroundColor Cyan
   docker compose up -d --build
   if ($LASTEXITCODE -ne 0) {
     Write-Host ''
@@ -241,7 +248,8 @@ try {
     }
     $summary = docker compose logs --no-log-prefix --tail 30 ingest 2>$null | Where-Object { $_ -cmatch '"seconds":' } | Select-Object -Last 1
     if ($summary -cmatch '"packets":(\d+).*"seconds":([\d.]+)') {
-      Write-Check ok "Ingestão concluída: $($Matches[1]) pacotes em $($Matches[2]) s"
+      if ($Matches[1] -eq '0') { Write-Check ok 'Ingestão em dia: nada novo desde a última subida' }
+      else { Write-Check ok "Ingestão concluída: $($Matches[1]) pacotes em $($Matches[2]) s" }
     }
   }
 

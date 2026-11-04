@@ -21,7 +21,7 @@
     "weather": "bun run --cwd apps/ingest src/main.ts weather",
     "replay": "bun run --cwd apps/ingest src/main.ts replay",
     "quality": "bun run --cwd apps/ingest src/main.ts quality",
-    "dev:api": "bun run --cwd apps/api dev",
+    "dev:api": "DEMO_MODE=true bun run --cwd apps/api --env-file=../../.env dev",
     "dev:web": "bun run --cwd apps/web dev",
     "openapi": "bun run --cwd apps/api openapi",
     "fixture": "bun run scripts/gerar-fixture.ts",
