@@ -1,11 +1,29 @@
 # Qualidade dos dados
 
-Como a telemetria do desafio foi avaliada, o que apareceu e como cada caso é tratado. Os números abaixo saem do relatório que a ingestão grava ao terminar e que pode ser reproduzido a qualquer momento:
+Como a telemetria do desafio foi avaliada, o que apareceu e como cada caso é tratado. Os números abaixo saem do relatório que a ingestão grava ao terminar. Há três formas de consultá-lo:
 
-```bash
-bun run quality                      # recalcula e mostra no log
-curl -b cookie http://localhost:8080/api/v1/quality   # mesma coisa pela API (administrador)
-```
+- **Na aplicação:** a página **Qualidade dos dados** (`http://127.0.0.1:8080/qualidade`), visível para o administrador (`ana.ribeiro@diel.example`). Ela mostra os indicadores, as anomalias com evidência, os episódios de sensor travado e as lacunas com link para o gráfico, e exporta cada tabela em CSV.
+- **Recalculando, sem precisar de Bun na máquina:**
+
+  ```bash
+  docker compose run --rm ingest bun run apps/ingest/src/main.ts quality
+  ```
+
+- **Pela API**, entrando como administrador. A senha é a `DEMO_PASSWORD` do `.env` ou a que o setup mostrou na primeira subida.
+
+  ```powershell
+  # Windows PowerShell 5.1 ou 7
+  $senha = Read-Host 'Senha'
+  Invoke-RestMethod http://127.0.0.1:8080/api/v1/auth/login -Method Post -ContentType 'application/json' -SessionVariable sessao -Body (@{ email = 'ana.ribeiro@diel.example'; password = $senha } | ConvertTo-Json) | Out-Null
+  Invoke-RestMethod http://127.0.0.1:8080/api/v1/quality -WebSession $sessao | ConvertTo-Json -Depth 6
+  ```
+
+  ```bash
+  # bash ou zsh
+  printf 'Senha: '; read -rs SENHA; echo
+  curl -s -c cookies.txt -H 'content-type: application/json' -d "{\"email\":\"ana.ribeiro@diel.example\",\"password\":\"$SENHA\"}" http://127.0.0.1:8080/api/v1/auth/login > /dev/null
+  curl -s -b cookies.txt http://127.0.0.1:8080/api/v1/quality
+  ```
 
 ## Como a avaliação foi feita
 
@@ -37,21 +55,30 @@ curl -b cookie http://localhost:8080/api/v1/quality   # mesma coisa pela API (ad
 | Lacuna sem dado                  | 6 trechos de 2,4 a 5,9 h                             | IOT004, IOT007, IOT010, IOT014, IOT020 e IOT023, sem `saved_data` para cobrir                                                                                                              |
 | Pacote perdido isolado           | cerca de 370                                         | intervalo de 12 min entre pacotes consecutivos                                                                                                                                             |
 
-Não apareceram: JSON inválido, horário malformado ou no futuro, pacote fora de ordem sem `saved_data`, amostras sobrepostas com valores diferentes, valores fisicamente impossíveis além dos códigos de erro, nem picos isolados (a maior variação entre amostras de 30 s é 3,9 °C, no fim de um travamento).
+Não apareceram:
+- JSON inválido;
+- horário malformado ou adiantado;
+- pacote fora de ordem sem `saved_data`;
+- amostras sobrepostas com valores diferentes;
+- valores fisicamente impossíveis além dos códigos de erro;
+- picos isolados. A maior variação entre amostras de 30 s é de 3,9 °C, no fim de um travamento.
+
+As regras para esses casos existem e são testadas mesmo assim, porque a produção vai trazê-los.
 
 ## Como cada caso é tratado
 
-| Caso                                                                  | Onde              | Tratamento                                                                                                                                               |
-| --------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Linha inválida (JSON, esquema, data)                                  | ingestão          | vai para o cru com `valid = false` e o motivo; não derruba a ingestão                                                                                    |
-| Duplicata                                                             | série             | chave (dispositivo, instante): a primeira gravação vence; o cru guarda todas as chegadas                                                                 |
-| Pacote atrasado                                                       | série e agregados | amostras entram no instante correto; os agregados contínuos daquele trecho são recalculados; o contato do dispositivo é registrado no "agora" da chegada |
-| Código -127 ou 85                                                     | série             | `quality = 1` (erro do sensor)                                                                                                                           |
-| Fora da faixa física (abaixo de -20 °C ou acima de 60 °C)             | série             | `quality = 2` (regra defensiva; não ocorreu)                                                                                                             |
-| Pico isolado (3 °C ou mais acima ou abaixo das duas vizinhas válidas) | série             | `quality = 3` (regra defensiva; não ocorreu). Degraus, quando o valor muda e permanece, não são picos                                                    |
-| Sensor travado (valor idêntico por 60 min ou mais)                    | série             | `quality = 4`, inclusive o começo da sequência, já gravado (remarcado no banco)                                                                          |
-| Dispositivo fora do cadastro                                          | estado            | quarentena em `state.unknown_device`; não entra na série nem nos indicadores                                                                             |
-| Lacuna                                                                | consulta          | trecho de 10 min ou mais sem leitura válida vira indisponibilidade "sem dados" ou "leitura descartada", com o motivo predominante                        |
+| Caso                                                                                                                    | Onde              | Tratamento                                                                                                                                               |
+| ----------------------------------------------------------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Linha inválida (JSON, esquema, data)                                                                                    | ingestão          | vai para o cru com `valid = false` e o motivo; não derruba a ingestão                                                                                    |
+| Relógio adiantado (mais de 10 min à frente do "agora", sem outro dispositivo cadastrado confirmando um horário próximo) | ingestão          | vai para o cru com `error = 'timestamp_futuro'`; fica fora da série e não adianta o "agora", e aparece no relatório (regra defensiva; não ocorreu)       |
+| Duplicata                                                                                                               | série             | chave (dispositivo, instante): a primeira gravação vence; o cru guarda todas as chegadas                                                                 |
+| Pacote atrasado                                                                                                         | série e agregados | amostras entram no instante correto; os agregados contínuos daquele trecho são recalculados; o contato do dispositivo é registrado no "agora" da chegada |
+| Código -127 ou 85                                                                                                       | série             | `quality = 1` (erro do sensor)                                                                                                                           |
+| Fora da faixa física (abaixo de -20 °C ou acima de 60 °C)                                                               | série             | `quality = 2` (regra defensiva; não ocorreu)                                                                                                             |
+| Pico isolado (3 °C ou mais acima ou abaixo das duas vizinhas válidas)                                                   | série             | `quality = 3` (regra defensiva; não ocorreu). Degraus, quando o valor muda e permanece, não são picos                                                    |
+| Sensor travado (valor idêntico por 60 min ou mais)                                                                      | série             | `quality = 4`, inclusive o começo da sequência, já gravado (remarcado no banco)                                                                          |
+| Dispositivo fora do cadastro                                                                                            | estado            | quarentena em `state.unknown_device`; não entra na série nem nos indicadores                                                                             |
+| Lacuna                                                                                                                  | consulta          | trecho de 10 min ou mais sem leitura válida vira indisponibilidade "sem dados" ou "leitura descartada", com o motivo predominante                        |
 
 Nenhuma leitura é apagada. As descartadas ficam na série com o código de qualidade, e os agregados contam cada motivo à parte. Assim o gráfico mostra o porquê de cada buraco, e uma mudança de regra pode ser reprocessada (`replay --rebuild`).
 
@@ -59,4 +86,4 @@ Nenhuma leitura é apagada. As descartadas ficam na série com o código de qual
 
 - Conforto é calculado só sobre leituras válidas no horário de funcionamento; lacunas não contam como dentro nem fora da faixa.
 - A **cobertura** mostra quanto do horário de funcionamento teve leitura válida. Ela deixa explícito quando um percentual de conforto vale para pouco tempo de dado.
-- Um sensor travado deixa o dispositivo em **falha no sensor** 15 minutos depois da detecção: ele continua comunicando, mas sem leitura válida.
+- Um sensor travado deixa o dispositivo em **falha no sensor** no próprio pacote em que o travamento é detectado. Ele continua comunicando, mas a última leitura válida volta para a de antes da sequência travada.
