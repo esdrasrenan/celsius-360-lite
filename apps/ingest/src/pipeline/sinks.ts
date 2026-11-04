@@ -41,7 +41,8 @@ export class RawSink {
 /**
  * Série tratada e estado no Postgres, numa transação por lote junto com o checkpoint da fonte.
  * Todas as escritas são idempotentes: amostra repetida é ignorada (primeira gravação vence),
- * e estado e checkpoint só avançam (GREATEST), então reprocessar não corrompe nada.
+ * e estado e checkpoint só avançam (GREATEST), então reprocessar não corrompe nada. A exceção é o
+ * último valor válido de um sensor que acabou de ser detectado como travado, que volta no tempo.
  */
 export class SeriesSink {
   constructor(private readonly pool: pg.Pool) {}
@@ -78,6 +79,14 @@ export class SeriesSink {
       }
 
       if (batch.devices.size > 0) await upsertDevices(client, batch.devices)
+      // Sensor travado detectado: o último valor válido volta no tempo, o que o upsert acima não faz
+      for (const deviceId of batch.validReset) {
+        const state = batch.devices.get(deviceId)
+        await client.query(
+          'UPDATE state.device SET last_valid_at = $2, last_valid_value = $3 WHERE device_id = $1',
+          [deviceId, iso(state?.lastValidAt ?? null), state?.lastValidValue ?? null],
+        )
+      }
 
       for (const [deviceId, seen] of batch.unknownDevices) {
         await client.query(

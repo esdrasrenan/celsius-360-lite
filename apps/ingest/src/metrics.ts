@@ -28,7 +28,7 @@ export class IngestMetrics {
 
   private readonly watermark = new client.Gauge({
     name: 'celsius_ingest_watermark_seconds',
-    help: '"Agora" da ingestão: horário do pacote mais recente processado (epoch)',
+    help: '"Agora" da ingestão: horário mais recente dos dispositivos cadastrados (epoch)',
     registers: [this.registry],
   })
 
@@ -43,10 +43,11 @@ export class IngestMetrics {
   }
 
   observeBatch(batch: Batch, durationMs: number) {
-    const { packets, invalid, unknownDevice, late } = batch.stats
-    this.packets.inc({ result: 'valid' }, packets - invalid - unknownDevice)
+    const { packets, invalid, unknownDevice, late, future } = batch.stats
+    this.packets.inc({ result: 'valid' }, packets - invalid - unknownDevice - future)
     if (invalid) this.packets.inc({ result: 'invalid' }, invalid)
     if (unknownDevice) this.packets.inc({ result: 'unknown_device' }, unknownDevice)
+    if (future) this.packets.inc({ result: 'future_timestamp' }, future)
     if (late) this.packets.inc({ result: 'late' }, late)
     const byQuality = new Map<number, number>()
     for (const reading of batch.readings)

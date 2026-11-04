@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { Quality } from '@celsius/domain'
-import { createTestEnvironment, expected, FIXTURE_SOURCE, type TestEnvironment } from './support'
+import { createTestEnvironment, expected, type TestEnvironment } from './support'
 
 let env: TestEnvironment
 
@@ -10,7 +10,7 @@ const rawCount = async () => {
   const result = await env.clickhouse.query({
     query: `SELECT count() AS total, countIf(NOT valid) AS invalid FROM raw.telemetry_packet FINAL
             WHERE source = {source:String}`,
-    query_params: { source: FIXTURE_SOURCE },
+    query_params: { source: env.source },
     format: 'JSONEachRow',
   })
   const [row] = await result.json<{ total: string; invalid: string }>()

@@ -60,8 +60,8 @@ async function loadDeviceMemory(pool: pg.Pool): Promise<Map<string, DeviceMemory
 
 /** Ao retomar de um checkpoint, reconstrói a sequência de valores idênticos em curso de cada dispositivo. */
 async function restoreStuckRuns(pool: pg.Pool, processor: TelemetryProcessor) {
-  const { rows } = await pool.query<{ device_id: string; ts: Date; value: number }>(
-    `SELECT r.device_id, r.ts, r.value
+  const { rows } = await pool.query<{ device_id: string; ts: Date; value: number; quality: number }>(
+    `SELECT r.device_id, r.ts, r.value, r.quality
      FROM telemetry.reading r JOIN state.device d ON d.device_id = r.device_id
      WHERE r.quality IN (${Quality.Ok}, ${Quality.Stuck}) AND r.ts > d.last_sample_at - interval '3 hours'
      ORDER BY r.device_id, r.ts DESC`,
@@ -71,11 +71,20 @@ async function restoreStuckRuns(pool: pg.Pool, processor: TelemetryProcessor) {
     const [latest] = recent
     if (!latest) continue
     let start = latest.ts.getTime()
-    for (const row of recent.slice(1)) {
+    let end = 1
+    for (; end < recent.length; end++) {
+      const row = recent[end] as (typeof recent)[number]
       if (row.value !== latest.value || start - row.ts.getTime() > STUCK_MAX_STEP_MS) break
       start = row.ts.getTime()
     }
-    processor.restoreStuckRun(deviceId, { value: latest.value, startTs: start, lastTs: latest.ts.getTime() })
+    // Para onde volta o último valor válido se a sequência virar travamento depois da retomada
+    const before = recent.slice(end).find((row) => row.quality === Quality.Ok)
+    processor.restoreStuckRun(deviceId, {
+      value: latest.value,
+      startTs: start,
+      lastTs: latest.ts.getTime(),
+      validBefore: before ? { ts: before.ts.getTime(), value: before.value } : null,
+    })
   }
 }
 
@@ -193,6 +202,8 @@ export async function replay(deps: Deps, config: Config, options: ReplayOptions)
       if (stopping) break
     }
     await flush()
+    // Roda mesmo sem pacote novo (fonte já no fim): colunas que uma migração acrescentou às
+    // projeções ficam preenchidas na subida, sem reprocessar a série
     await refresh()
   } finally {
     process.off('SIGINT', stop)

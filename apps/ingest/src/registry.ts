@@ -99,6 +99,56 @@ export const registryFileSchema = z
 
 export type RegistryFile = z.infer<typeof registryFileSchema>
 
+/** Cliente das lojas de carga (comando rede-sintetica): a ingestão e o relatório de qualidade as ignoram. */
+export const SYNTHETIC_CLIENT_ID = 'CLI-SINT'
+
+type Role = RegistryFile['usuarios'][number]['perfil']
+
+const ROLE_LABEL: Record<Role, string> = {
+  admin_diel: 'Administrador Diel',
+  gestor_cliente: 'Gestor do cliente',
+  gerente_loja: 'Gerente de loja',
+}
+
+export const PASSWORD_RESET_HINT =
+  'Os usuários já têm senha de uma subida anterior. Para redefinir: defina DEMO_PASSWORD no .env (mínimo 8 caracteres) e rode docker compose up -d.'
+
+/** O que o setup mostra no fim: onde abrir, com quem entrar e de onde vem a senha. */
+export interface DemoAccess {
+  users: Array<{ email: string; role: Role }>
+  passwordFromEnv: boolean
+  /** Senha gerada nesta execução, para quem ainda não tinha uma; só aparece aqui */
+  generatedPassword: string | null
+  /** Usuários que mantiveram a senha de uma subida anterior */
+  previousPasswords: number
+}
+
+/** Quadro em texto puro (fora do JSON do log), fácil de achar em `docker compose logs setup`. */
+export function formatAccess(access: DemoAccess, appUrl: string): string {
+  const width = Math.max(...access.users.map((user) => user.email.length))
+  const users = access.users.map((user) => `${user.email.padEnd(width)}  ${ROLE_LABEL[user.role]}`)
+  const password = access.passwordFromEnv
+    ? ['a DEMO_PASSWORD do arquivo .env']
+    : [
+        ...(access.generatedPassword
+          ? [
+              `${access.generatedPassword} (gerada agora e mostrada só desta vez; anote ou defina DEMO_PASSWORD no .env)`,
+            ]
+          : []),
+        ...(access.previousPasswords > 0 ? [PASSWORD_RESET_HINT] : []),
+      ]
+  const rows = (label: string, lines: string[]) =>
+    lines.map((line, index) => `  ${(index === 0 ? label : '').padEnd(10)} ${line}`)
+  return [
+    '',
+    'Celsius 360 Lite: acesso',
+    ...rows('Aplicação', [appUrl]),
+    ...rows('Usuários', users),
+    ...rows('Senha', password),
+    '',
+  ].join('\n')
+}
+
 function generatePassword(): string {
   const alphabet = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
   return Array.from(
@@ -109,15 +159,16 @@ function generatePassword(): string {
 
 /**
  * Grava o cadastro de forma idempotente (upsert por id). Senhas não vêm do cadastro nem do repositório:
- * se DEMO_PASSWORD estiver definida, todos os usuários de demonstração a usam; senão, uma senha
- * aleatória é gerada uma única vez e mostrada no log.
+ * se DEMO_PASSWORD estiver definida, todos os usuários de demonstração passam a usá-la (a cada setup,
+ * então ela também serve para redefinir uma senha perdida); senão, quem ainda não tem senha recebe
+ * uma aleatória, mostrada uma única vez no quadro de acesso.
  */
 export async function seedRegistry(
   pool: pg.Pool,
   registry: RegistryFile,
   demoPassword: string | undefined,
   logger: Logger,
-) {
+): Promise<DemoAccess> {
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
@@ -187,20 +238,15 @@ export async function seedRegistry(
       }
     }
     // Senha escolhida vale para todos; sem ela, só quem ainda não tem senha recebe uma gerada
-    const target = await client.query<{ id: string }>(
-      demoPassword
-        ? 'SELECT id FROM registry.app_user'
-        : 'SELECT id FROM registry.app_user WHERE password_hash IS NULL',
+    const { rows: users } = await client.query<{ id: string; has_password: boolean }>(
+      'SELECT id, password_hash IS NOT NULL AS has_password FROM registry.app_user',
     )
-    let generatedPassword: string | null = null
-    if (target.rows.length > 0) {
-      if (!demoPassword) generatedPassword = generatePassword()
-      const password = demoPassword ?? (generatedPassword as string)
+    const target = users.filter((user) => demoPassword || !user.has_password).map((user) => user.id)
+    const generatedPassword = target.length > 0 && !demoPassword ? generatePassword() : null
+    const password = demoPassword ?? generatedPassword
+    if (password) {
       const hash = await Bun.password.hash(password, { algorithm: 'argon2id' })
-      await client.query('UPDATE registry.app_user SET password_hash = $1 WHERE id = ANY($2)', [
-        hash,
-        target.rows.map((row) => row.id),
-      ])
+      await client.query('UPDATE registry.app_user SET password_hash = $1 WHERE id = ANY($2)', [hash, target])
     }
     await client.query('COMMIT')
 
@@ -213,11 +259,15 @@ export async function seedRegistry(
       },
       'cadastro gravado',
     )
-    if (generatedPassword) {
-      logger.warn(
-        { users: registry.usuarios.map((user) => user.email) },
-        `Senha de demonstração gerada para os usuários do cadastro: ${generatedPassword} (defina DEMO_PASSWORD para escolher outra)`,
-      )
+    const previousPasswords = users.length - target.length
+    if (generatedPassword)
+      logger.info({ users: target.length }, 'senha de demonstração gerada (veja o quadro de acesso)')
+    if (previousPasswords > 0) logger.warn(PASSWORD_RESET_HINT)
+    return {
+      users: registry.usuarios.map((user) => ({ email: user.email, role: user.perfil })),
+      passwordFromEnv: demoPassword !== undefined,
+      generatedPassword,
+      previousPasswords,
     }
   } catch (error) {
     await client.query('ROLLBACK')
@@ -251,7 +301,9 @@ export async function loadEnvironments(pool: pg.Pool): Promise<EnvironmentContex
   }>(
     `SELECT e.id, e.store_id, s.client_id, e.device_id, e.comfort_min, e.comfort_max, e.opening_hours, s.timezone
      FROM registry.environment e JOIN registry.store s ON s.id = e.store_id
+     WHERE s.client_id <> $1
      ORDER BY e.id`,
+    [SYNTHETIC_CLIENT_ID],
   )
   return rows.map((row) => ({
     environmentId: row.id,

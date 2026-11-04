@@ -1,7 +1,8 @@
-import { BUCKET_MS, findGaps, Quality } from '@celsius/domain'
+import { BUCKET_MS, CLOCK_TOLERANCE_MS, findGaps, Quality } from '@celsius/domain'
 import type { ClickHouseClient } from '@clickhouse/client'
 import type pg from 'pg'
 import type { Logger } from '../infra'
+import { SYNTHETIC_CLIENT_ID } from '../registry'
 
 const LATE_THRESHOLD_S = 15 * 60
 const REPORTED_GAP_MS = 30 * 60_000
@@ -17,6 +18,15 @@ async function rows<T>(
 
 const num = (value: unknown) => Number(value ?? 0)
 const minutes = (from: number, to: number) => Math.round((to - from) / 60_000)
+/** DateTime do ClickHouse ("2026-02-03 02:59:46", em UTC) para ISO 8601 */
+const isoFromClickHouse = (value: string) => new Date(`${value.replace(' ', 'T')}Z`).toISOString()
+
+interface DeviceWindow {
+  device_id: string
+  packets: string
+  first: string
+  last: string
+}
 
 /**
  * Relatório de qualidade da telemetria: o que veio no dado cru (ClickHouse) e como foi tratado na
@@ -30,7 +40,12 @@ export async function buildQualityReport(
 ) {
   const registered = (
     await pool.query<{ id: string; environment_id: string }>(
-      'SELECT d.id, e.id AS environment_id FROM registry.device d JOIN registry.environment e ON e.device_id = d.id',
+      `SELECT d.id, e.id AS environment_id
+       FROM registry.device d
+       JOIN registry.environment e ON e.device_id = d.id
+       JOIN registry.store s ON s.id = e.store_id
+       WHERE s.client_id <> $1`,
+      [SYNTHETIC_CLIENT_ID],
     )
   ).rows
   const environmentOf = new Map(registered.map((row) => [row.id, row.environment_id]))
@@ -38,7 +53,8 @@ export async function buildQualityReport(
 
   const [packets] = await rows<Record<string, unknown>>(
     clickhouse,
-    `SELECT count() AS total, countIf(NOT valid) AS invalid, countIf(saved_data) AS saved_data,
+    `SELECT count() AS total, countIf(NOT valid AND error != 'timestamp_futuro') AS invalid,
+            countIf(saved_data) AS saved_data,
             uniqExactIf(device_id, valid) AS devices,
             sum(arrayCount(x -> x = -127, samples)) AS code_minus_127,
             sum(arrayCount(x -> x = 85, samples)) AS code_85,
@@ -53,21 +69,31 @@ export async function buildQualityReport(
        WHERE source = {source:String} AND valid GROUP BY device_id, sent_at, payload_hash HAVING c > 1)`,
     params,
   )
-  // Atraso na chegada: quanto o pacote está atrás do maior horário já recebido quando chegou
+  // Atraso na chegada: quanto o pacote está atrás do maior horário da frota cadastrada quando chegou
   const [late] = await rows<Record<string, unknown>>(
     clickhouse,
     `SELECT countIf(lag > ${LATE_THRESHOLD_S}) AS packets, countIf(lag > ${LATE_THRESHOLD_S} AND saved_data) AS with_saved_data,
             max(lag) AS max_seconds
      FROM (SELECT saved_data,
              dateDiff('second', sent_at, max(sent_at) OVER (ORDER BY seq ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)) AS lag
-           FROM raw.telemetry_packet FINAL WHERE source = {source:String} AND valid)`,
+           FROM raw.telemetry_packet FINAL
+           WHERE source = {source:String} AND valid AND device_id IN {known:Array(String)})`,
     params,
   )
-  const unknown = await rows<{ device_id: string; packets: string; first: string; last: string }>(
+  const unknown = await rows<DeviceWindow>(
     clickhouse,
     `SELECT device_id, count() AS packets, toString(min(sent_at)) AS first, toString(max(sent_at)) AS last
      FROM raw.telemetry_packet FINAL
      WHERE source = {source:String} AND valid AND device_id NOT IN {known:Array(String)}
+     GROUP BY device_id ORDER BY device_id`,
+    params,
+  )
+  // Relógio adiantado sem confirmação de outro dispositivo: ficou no cru, fora da série e do "agora"
+  const future = await rows<DeviceWindow>(
+    clickhouse,
+    `SELECT device_id, count() AS packets, toString(min(sent_at)) AS first, toString(max(sent_at)) AS last
+     FROM raw.telemetry_packet FINAL
+     WHERE source = {source:String} AND error = 'timestamp_futuro'
      GROUP BY device_id ORDER BY device_id`,
     params,
   )
@@ -80,8 +106,8 @@ export async function buildQualityReport(
     ).rows.map((row) => [row.quality, row.count]),
   )
   const stuckEpisodes = (
-    await pool.query<{ device_id: string; from_ts: Date; to_ts: Date; value: number }>(
-      `SELECT device_id, min(ts) AS from_ts, max(ts) AS to_ts, min(value) AS value
+    await pool.query<{ device_id: string; from_ts: Date; to_ts: Date; value: number; samples: number }>(
+      `SELECT device_id, min(ts) AS from_ts, max(ts) AS to_ts, min(value) AS value, count(*) AS samples
      FROM (SELECT device_id, ts, value,
              ts - (row_number() OVER (PARTITION BY device_id ORDER BY ts)) * interval '30 seconds' AS island
            FROM telemetry.reading WHERE quality = ${Quality.Stuck}) t
@@ -94,6 +120,7 @@ export async function buildQualityReport(
     to: row.to_ts.toISOString(),
     minutes: minutes(row.from_ts.getTime(), row.to_ts.getTime()),
     value: row.value,
+    samples: row.samples,
   }))
 
   const bounds = (
@@ -164,6 +191,17 @@ export async function buildQualityReport(
         maxMinutes: Math.round(num(late?.max_seconds) / 60),
         thresholdMinutes: LATE_THRESHOLD_S / 60,
       },
+      futureTimestamp: {
+        packets: future.reduce((sum, row) => sum + num(row.packets), 0),
+        toleranceMinutes: CLOCK_TOLERANCE_MS / 60_000,
+        devices: future.map((row) => ({
+          deviceId: row.device_id,
+          environmentId: environmentOf.get(row.device_id) ?? null,
+          packets: num(row.packets),
+          from: isoFromClickHouse(row.first),
+          to: isoFromClickHouse(row.last),
+        })),
+      },
     },
     devices: {
       registered: registered.length,
@@ -171,8 +209,8 @@ export async function buildQualityReport(
       unknown: unknown.map((row) => ({
         deviceId: row.device_id,
         packets: num(row.packets),
-        from: row.first,
-        to: row.last,
+        from: isoFromClickHouse(row.first),
+        to: isoFromClickHouse(row.last),
       })),
       reboots: num(packets?.reboots),
     },

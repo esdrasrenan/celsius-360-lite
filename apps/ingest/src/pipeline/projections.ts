@@ -1,11 +1,13 @@
 import {
   COMFORT_TARGET_PCT,
   type ComfortCounts,
+  type ComfortIndicator,
   comfortIndicator,
   type DeviceStatus,
   deviceStatus,
   EXPECTED_SAMPLING_MS,
   isOpenAt,
+  nextOpenAt,
   openDurationMs,
   PERIOD_KEYS,
   PERIODS,
@@ -44,8 +46,75 @@ interface EnvironmentView {
   context: EnvironmentContext
   status: DeviceStatus
   situation: Situation
-  indicators: Map<PeriodKey, { counts: ComfortCounts; comfortPct: number | null }>
+  openNow: boolean
+  nextOpenAt: number | null
+  indicators: Map<PeriodKey, { counts: ComfortCounts; indicator: ComfortIndicator }>
 }
+
+// Colunas gravadas em cada projeção, com o tipo do Postgres
+const ENVIRONMENT_SNAPSHOT = {
+  environment_id: 'text',
+  status: 'text',
+  situation: 'text',
+  last_value: 'real',
+  last_valid_at: 'timestamptz',
+  last_contact_at: 'timestamptz',
+  open_now: 'boolean',
+  next_open_at: 'timestamptz',
+  now_ts: 'timestamptz',
+}
+
+const ENVIRONMENT_INDICATOR = {
+  environment_id: 'text',
+  period: 'text',
+  from_ts: 'timestamptz',
+  to_ts: 'timestamptz',
+  samples_in_hours: 'int',
+  samples_within: 'int',
+  samples_above: 'int',
+  samples_below: 'int',
+  samples_expected: 'int',
+  samples_discarded: 'int',
+  value_avg: 'real',
+  value_min: 'real',
+  value_max: 'real',
+  comfort_pct: 'real',
+  above_pct: 'real',
+  below_pct: 'real',
+  coverage_pct: 'real',
+}
+
+const STORE_SNAPSHOT = {
+  store_id: 'text',
+  period: 'text',
+  status: 'text',
+  status_rank: 'smallint',
+  environments: 'int',
+  env_online: 'int',
+  env_sensor_fault: 'int',
+  env_offline: 'int',
+  env_no_data: 'int',
+  env_out_of_range: 'int',
+  env_above: 'int',
+  env_below: 'int',
+  env_open_now: 'int',
+  env_below_target: 'int',
+  samples_in_hours: 'int',
+  samples_within: 'int',
+  samples_above: 'int',
+  samples_below: 'int',
+  samples_expected: 'int',
+  comfort_pct: 'real',
+  above_pct: 'real',
+  below_pct: 'real',
+  coverage_pct: 'real',
+  next_open_at: 'timestamptz',
+  worst_env_id: 'text',
+  worst_env_comfort: 'real',
+  now_ts: 'timestamptz',
+}
+
+const iso = (ms: number | null | undefined) => (ms == null ? null : new Date(ms).toISOString())
 
 /**
  * Lado de leitura (CQRS): a cada ciclo, recalcula com as regras do domínio o status e a situação
@@ -68,13 +137,21 @@ export class Projector {
     for (const context of this.environments) {
       const device = context.deviceId ? devices.get(context.deviceId) : undefined
       const status = deviceStatus(device ?? null, now)
+      const openNow = isOpenAt(context.schedule, now, context.timeZone)
       const situation = situationNow({
         status,
         lastValue: device?.lastValidValue ?? null,
         range: context.range,
-        openNow: isOpenAt(context.schedule, now, context.timeZone),
+        openNow,
       })
-      views.set(context.environmentId, { context, status, situation, indicators: new Map() })
+      views.set(context.environmentId, {
+        context,
+        status,
+        situation,
+        openNow,
+        nextOpenAt: openNow ? null : nextOpenAt(context.schedule, now, context.timeZone),
+        indicators: new Map(),
+      })
     }
 
     const client = await this.pool.connect()
@@ -83,14 +160,10 @@ export class Projector {
       await this.writeEnvironmentSnapshots(client, views, devices, now)
       for (const period of PERIOD_KEYS) await this.writeEnvironmentIndicators(client, views, period, now)
       await this.writeStoreSnapshots(client, views, now)
+      // Sem ids de loja: o NOTIFY tem teto de 8.000 bytes, e a interface refaz as próprias consultas
       await client.query('SELECT pg_notify($1, $2)', [
         EVENTS_CHANNEL,
-        JSON.stringify({
-          type: 'state_updated',
-          now: new Date(now).toISOString(),
-          lastSeq,
-          storeIds: [...new Set(this.environments.map((environment) => environment.storeId))],
-        }),
+        JSON.stringify({ type: 'state_updated', now: iso(now), lastSeq }),
       ])
       await client.query('COMMIT')
     } catch (error) {
@@ -107,27 +180,23 @@ export class Projector {
     devices: ReadonlyMap<string, DeviceMemory>,
     now: number,
   ) {
-    const list = [...views.values()]
-    const device = (view: EnvironmentView) =>
-      view.context.deviceId ? devices.get(view.context.deviceId) : undefined
-    const iso = (ms: number | null | undefined) => (ms == null ? null : new Date(ms).toISOString())
-    await client.query(
-      `INSERT INTO state.environment_snapshot
-         (environment_id, status, situation, last_value, last_valid_at, last_contact_at, now_ts, updated_at)
-       SELECT *, now() FROM unnest($1::text[], $2::text[], $3::text[], $4::real[], $5::timestamptz[], $6::timestamptz[], $7::timestamptz[])
-       ON CONFLICT (environment_id) DO UPDATE SET status = EXCLUDED.status, situation = EXCLUDED.situation,
-         last_value = EXCLUDED.last_value, last_valid_at = EXCLUDED.last_valid_at,
-         last_contact_at = EXCLUDED.last_contact_at, now_ts = EXCLUDED.now_ts, updated_at = now()`,
-      [
-        list.map((view) => view.context.environmentId),
-        list.map((view) => view.status),
-        list.map((view) => view.situation),
-        list.map((view) => device(view)?.lastValidValue ?? null),
-        list.map((view) => iso(device(view)?.lastValidAt)),
-        list.map((view) => iso(device(view)?.lastContactAt)),
-        list.map(() => iso(now)),
-      ],
-    )
+    const rows = [...views.values()].map((view) => {
+      const device = view.context.deviceId ? devices.get(view.context.deviceId) : undefined
+      return {
+        environment_id: view.context.environmentId,
+        status: view.status,
+        situation: view.situation,
+        last_value: device?.lastValidValue ?? null,
+        last_valid_at: iso(device?.lastValidAt),
+        last_contact_at: iso(device?.lastContactAt),
+        open_now: view.openNow,
+        next_open_at: iso(view.nextOpenAt),
+        now_ts: iso(now),
+      }
+    })
+    await upsert(client, 'state.environment_snapshot', ['environment_id'], ENVIRONMENT_SNAPSHOT, rows, [
+      'updated_at = now()',
+    ])
   }
 
   private async writeEnvironmentIndicators(
@@ -137,7 +206,7 @@ export class Projector {
     now: number,
   ) {
     const { from, to } = periodRange(period, now)
-    const { rows } = await client.query<PeriodRow>(
+    const { rows: aggregates } = await client.query<PeriodRow>(
       `SELECT device_id,
          sum(in_hours) AS in_hours, sum(within) AS within, sum(above) AS above, sum(below) AS below,
          sum(samples - samples_ok) AS discarded,
@@ -146,11 +215,11 @@ export class Projector {
        FROM ${VIEW_BY_BUCKET[PERIODS[period].bucket]}
        WHERE bucket >= $1 AND bucket < $2
        GROUP BY device_id`,
-      [new Date(from).toISOString(), new Date(to).toISOString()],
+      [iso(from), iso(to)],
     )
-    const byDevice = new Map(rows.map((row) => [row.device_id, row]))
+    const byDevice = new Map(aggregates.map((row) => [row.device_id, row]))
 
-    const values = [...views.values()].map((view) => {
+    const rows = [...views.values()].map((view) => {
       const row = view.context.deviceId ? byDevice.get(view.context.deviceId) : undefined
       const expected = Math.floor(
         openDurationMs(view.context.schedule, from, Math.min(to, now), view.context.timeZone) /
@@ -164,115 +233,131 @@ export class Projector {
         expected,
       }
       const indicator = comfortIndicator(counts)
-      view.indicators.set(period, { counts, comfortPct: indicator.comfortPct })
-      return { view, row, counts, indicator }
-    })
-
-    await client.query(
-      `INSERT INTO state.environment_indicator (environment_id, period, from_ts, to_ts, samples_in_hours,
-         samples_within, samples_above, samples_below, samples_expected, samples_discarded,
-         value_avg, value_min, value_max, comfort_pct, coverage_pct)
-       SELECT e, $2, $3, $4, ih, w, a, b, ex, d, avg, mn, mx, cp, cv
-       FROM unnest($1::text[], $5::int[], $6::int[], $7::int[], $8::int[], $9::int[], $10::int[],
-                   $11::real[], $12::real[], $13::real[], $14::real[], $15::real[])
-         AS t(e, ih, w, a, b, ex, d, avg, mn, mx, cp, cv)
-       ON CONFLICT (environment_id, period) DO UPDATE SET from_ts = EXCLUDED.from_ts, to_ts = EXCLUDED.to_ts,
-         samples_in_hours = EXCLUDED.samples_in_hours, samples_within = EXCLUDED.samples_within,
-         samples_above = EXCLUDED.samples_above, samples_below = EXCLUDED.samples_below,
-         samples_expected = EXCLUDED.samples_expected, samples_discarded = EXCLUDED.samples_discarded,
-         value_avg = EXCLUDED.value_avg, value_min = EXCLUDED.value_min, value_max = EXCLUDED.value_max,
-         comfort_pct = EXCLUDED.comfort_pct, coverage_pct = EXCLUDED.coverage_pct`,
-      [
-        values.map((item) => item.view.context.environmentId),
+      view.indicators.set(period, { counts, indicator })
+      return {
+        environment_id: view.context.environmentId,
         period,
-        new Date(from).toISOString(),
-        new Date(to).toISOString(),
-        values.map((item) => item.counts.inHours),
-        values.map((item) => item.counts.within),
-        values.map((item) => item.counts.above),
-        values.map((item) => item.counts.below),
-        values.map((item) => item.counts.expected),
-        values.map((item) => item.row?.discarded ?? 0),
-        values.map((item) => item.row?.value_avg ?? null),
-        values.map((item) => item.row?.value_min ?? null),
-        values.map((item) => item.row?.value_max ?? null),
-        values.map((item) => item.indicator.comfortPct),
-        values.map((item) => item.indicator.coveragePct),
-      ],
+        from_ts: iso(from),
+        to_ts: iso(to),
+        samples_in_hours: counts.inHours,
+        samples_within: counts.within,
+        samples_above: counts.above,
+        samples_below: counts.below,
+        samples_expected: counts.expected,
+        samples_discarded: row?.discarded ?? 0,
+        value_avg: row?.value_avg ?? null,
+        value_min: row?.value_min ?? null,
+        value_max: row?.value_max ?? null,
+        comfort_pct: indicator.comfortPct,
+        above_pct: indicator.abovePct,
+        below_pct: indicator.belowPct,
+        coverage_pct: indicator.coveragePct,
+      }
+    })
+    await upsert(
+      client,
+      'state.environment_indicator',
+      ['environment_id', 'period'],
+      ENVIRONMENT_INDICATOR,
+      rows,
     )
   }
 
   private async writeStoreSnapshots(client: pg.PoolClient, views: Map<string, EnvironmentView>, now: number) {
-    const byStore = new Map<string, EnvironmentView[]>()
-    for (const view of views.values()) {
-      const list = byStore.get(view.context.storeId) ?? []
-      list.push(view)
-      byStore.set(view.context.storeId, list)
-    }
+    const byStore = Map.groupBy(views.values(), (view) => view.context.storeId)
 
-    const rows = [...byStore.entries()].flatMap(([storeId, list]) =>
-      PERIOD_KEYS.map((period) => {
-        const statuses = list.map((view) => view.status)
-        const status = storeStatus(statuses)
+    const rows = [...byStore.entries()].flatMap(([storeId, list]) => {
+      const status = storeStatus(list.map((view) => view.status))
+      const count = (predicate: (view: EnvironmentView) => boolean) => list.filter(predicate).length
+      const openNow = count((view) => view.openNow)
+      const nextOpenings = list.flatMap((view) => (view.nextOpenAt === null ? [] : [view.nextOpenAt]))
+
+      return PERIOD_KEYS.map((period) => {
         const counts = sumCounts(list.map((view) => view.indicators.get(period)?.counts ?? emptyCounts))
         const indicator = comfortIndicator(counts)
-        const count = (value: DeviceStatus) => statuses.filter((item) => item === value).length
+        const worst = worstEnvironment(list, period)
         return {
-          storeId,
+          store_id: storeId,
           period,
           status,
-          rank: STORE_STATUS_RANK[status],
+          status_rank: STORE_STATUS_RANK[status],
           environments: list.length,
-          online: count('online'),
-          sensorFault: count('sensor_fault'),
-          offline: count('offline'),
-          noData: count('no_data'),
-          outOfRange: list.filter((view) => view.situation === 'above' || view.situation === 'below').length,
-          belowTarget: list.filter((view) => {
-            const pct = view.indicators.get(period)?.comfortPct
-            return pct !== null && pct !== undefined && pct < COMFORT_TARGET_PCT
-          }).length,
-          inHours: counts.inHours,
-          within: counts.within,
-          comfortPct: indicator.comfortPct,
-          coveragePct: indicator.coveragePct,
+          env_online: count((view) => view.status === 'online'),
+          env_sensor_fault: count((view) => view.status === 'sensor_fault'),
+          env_offline: count((view) => view.status === 'offline'),
+          env_no_data: count((view) => view.status === 'no_data'),
+          env_out_of_range: count((view) => view.situation === 'above' || view.situation === 'below'),
+          env_above: count((view) => view.situation === 'above'),
+          env_below: count((view) => view.situation === 'below'),
+          env_open_now: openNow,
+          env_below_target: count((view) => {
+            const pct = view.indicators.get(period)?.indicator.comfortPct
+            return pct != null && pct < COMFORT_TARGET_PCT
+          }),
+          samples_in_hours: counts.inHours,
+          samples_within: counts.within,
+          samples_above: counts.above,
+          samples_below: counts.below,
+          samples_expected: counts.expected,
+          comfort_pct: indicator.comfortPct,
+          above_pct: indicator.abovePct,
+          below_pct: indicator.belowPct,
+          coverage_pct: indicator.coveragePct,
+          // A loja só "abre às ..." quando todos os ambientes estão fechados
+          next_open_at: openNow > 0 || nextOpenings.length === 0 ? null : iso(Math.min(...nextOpenings)),
+          worst_env_id: worst?.environmentId ?? null,
+          worst_env_comfort: worst?.comfortPct ?? null,
+          now_ts: iso(now),
         }
-      }),
-    )
-
-    await client.query(
-      `INSERT INTO state.store_snapshot (store_id, period, status, status_rank, environments, env_online,
-         env_sensor_fault, env_offline, env_no_data, env_out_of_range, env_below_target, samples_in_hours,
-         samples_within, comfort_pct, coverage_pct, now_ts)
-       SELECT *, $16::timestamptz FROM unnest($1::text[], $2::text[], $3::text[], $4::smallint[], $5::int[], $6::int[],
-         $7::int[], $8::int[], $9::int[], $10::int[], $11::int[], $12::int[], $13::int[], $14::real[], $15::real[])
-       ON CONFLICT (store_id, period) DO UPDATE SET status = EXCLUDED.status, status_rank = EXCLUDED.status_rank,
-         environments = EXCLUDED.environments, env_online = EXCLUDED.env_online,
-         env_sensor_fault = EXCLUDED.env_sensor_fault, env_offline = EXCLUDED.env_offline,
-         env_no_data = EXCLUDED.env_no_data, env_out_of_range = EXCLUDED.env_out_of_range,
-         env_below_target = EXCLUDED.env_below_target, samples_in_hours = EXCLUDED.samples_in_hours,
-         samples_within = EXCLUDED.samples_within, comfort_pct = EXCLUDED.comfort_pct,
-         coverage_pct = EXCLUDED.coverage_pct, now_ts = EXCLUDED.now_ts`,
-      [
-        rows.map((row) => row.storeId),
-        rows.map((row) => row.period),
-        rows.map((row) => row.status),
-        rows.map((row) => row.rank),
-        rows.map((row) => row.environments),
-        rows.map((row) => row.online),
-        rows.map((row) => row.sensorFault),
-        rows.map((row) => row.offline),
-        rows.map((row) => row.noData),
-        rows.map((row) => row.outOfRange),
-        rows.map((row) => row.belowTarget),
-        rows.map((row) => row.inHours),
-        rows.map((row) => row.within),
-        rows.map((row) => row.comfortPct),
-        rows.map((row) => row.coveragePct),
-        new Date(now).toISOString(),
-      ],
-    )
+      })
+    })
+    await upsert(client, 'state.store_snapshot', ['store_id', 'period'], STORE_SNAPSHOT, rows)
   }
+}
+
+/**
+ * Grava as linhas num comando só: vão como um parâmetro JSON e viram registros com
+ * jsonb_to_recordset. Tabela e colunas são constantes deste arquivo, nunca entrada externa.
+ */
+async function upsert<C extends Record<string, string>>(
+  client: pg.PoolClient,
+  table: string,
+  key: ReadonlyArray<keyof C & string>,
+  columns: C,
+  rows: ReadonlyArray<Record<keyof C, unknown>>,
+  alsoOnUpdate: readonly string[] = [],
+) {
+  if (rows.length === 0) return
+  const names = Object.keys(columns)
+  const update = [
+    ...names.filter((name) => !key.includes(name)).map((name) => `${name} = EXCLUDED.${name}`),
+    ...alsoOnUpdate,
+  ]
+  await client.query(
+    `INSERT INTO ${table} (${names.join(', ')})
+     SELECT ${names.join(', ')}
+     FROM jsonb_to_recordset($1::jsonb) AS t(${names.map((name) => `${name} ${columns[name]}`).join(', ')})
+     ON CONFLICT (${key.join(', ')}) DO UPDATE SET ${update.join(', ')}`,
+    [JSON.stringify(rows)],
+  )
+}
+
+/** Ambiente de menor conforto no período, entre os que têm conforto definido (desempate pelo id). */
+function worstEnvironment(list: readonly EnvironmentView[], period: PeriodKey) {
+  let worst: { environmentId: string; comfortPct: number } | null = null
+  for (const view of list) {
+    const comfortPct = view.indicators.get(period)?.indicator.comfortPct
+    if (comfortPct == null) continue
+    const environmentId = view.context.environmentId
+    if (
+      !worst ||
+      comfortPct < worst.comfortPct ||
+      (comfortPct === worst.comfortPct && environmentId < worst.environmentId)
+    ) {
+      worst = { environmentId, comfortPct }
+    }
+  }
+  return worst
 }
 
 const emptyCounts: ComfortCounts = { inHours: 0, within: 0, above: 0, below: 0, expected: 0 }

@@ -3,6 +3,7 @@ import type pg from 'pg'
 import { type Config, telemetryPath } from '../config'
 import type { Logger } from '../infra'
 import { boundaryLines } from '../pipeline/lines'
+import { SYNTHETIC_CLIENT_ID } from '../registry'
 
 const ARCHIVE_URL = 'https://archive-api.open-meteo.com/v1/archive'
 const DAY_MS = 86_400_000
@@ -90,7 +91,8 @@ export async function loadOutdoorTemperature(
     return
   }
   const { rows: stores } = await pool.query<StoreRow>(
-    'SELECT id, latitude, longitude FROM registry.store ORDER BY id',
+    'SELECT id, latitude, longitude FROM registry.store WHERE client_id <> $1 ORDER BY id',
+    [SYNTHETIC_CLIENT_ID],
   )
   const cache = await readCache(config.WEATHER_CACHE_FILE)
   const fresh: WeatherCache = {

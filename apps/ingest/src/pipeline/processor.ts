@@ -2,13 +2,16 @@ import {
   classifyValue,
   comfortLevel,
   expandSamples,
+  FleetClock,
   isOpenAt,
   markSpikes,
   parsePacketLine,
   Quality,
   type QualityCode,
+  type RejectReason,
   StuckDetector,
   type StuckRange,
+  type ValidReading,
 } from '@celsius/domain'
 import type { EnvironmentContext } from '../registry'
 import type { SourceLine } from './lines'
@@ -26,7 +29,7 @@ export interface RawRow {
   payload: string
   payload_hash: string
   valid: boolean
-  error: string
+  error: RejectReason | ''
 }
 
 export interface ReadingRow {
@@ -54,9 +57,11 @@ export interface Batch {
   readings: ReadingRow[]
   stuck: StuckRange[]
   devices: Map<string, DeviceMemory>
+  /** Dispositivos cujo último valor válido voltou no tempo (sensor travado detectado) */
+  validReset: Set<string>
   unknownDevices: Map<string, { firstSeen: number; lastSeen: number }>
   touched: { from: number; to: number } | null
-  stats: { packets: number; invalid: number; unknownDevice: number; late: number }
+  stats: { packets: number; invalid: number; unknownDevice: number; late: number; future: number }
 }
 
 const toClickHouseTime = (ms: number) => new Date(ms).toISOString().replace('T', ' ').slice(0, 19)
@@ -69,31 +74,43 @@ const toClickHouseTime = (ms: number) => new Date(ms).toISOString().replace('T',
  * Pacote "ao vivo" é o que começa depois da última amostra já recebida do dispositivo. Os demais
  * (atrasados, reenviados com saved_data ou duplicados) entram na série sem participar da detecção
  * de sensor travado, que depende de ordem temporal.
+ *
+ * O "agora" vem só dos dispositivos cadastrados (FleetClock); pacote com relógio adiantado e sem
+ * confirmação fica no cru como timestamp_futuro, fora da série e do estado.
  */
 export class TelemetryProcessor {
   private readonly byDevice: Map<string, EnvironmentContext>
   private readonly stuck = new StuckDetector()
+  private readonly clock: FleetClock
   private batch!: Batch
 
   constructor(
     private readonly source: string,
     environments: readonly EnvironmentContext[],
     private readonly devices: Map<string, DeviceMemory>,
-    private now: number | null,
+    now: number | null,
   ) {
     this.byDevice = new Map(
       environments.flatMap((environment) =>
         environment.deviceId ? [[environment.deviceId, environment]] : [],
       ),
     )
+    this.clock = new FleetClock(
+      this.byDevice.size,
+      now,
+      [...devices].map(([deviceId, state]) => [deviceId, state.lastSampleAt] as const),
+    )
     this.reset()
   }
 
   get currentNow(): number | null {
-    return this.now
+    return this.clock.now
   }
 
-  restoreStuckRun(deviceId: string, run: { value: number; startTs: number; lastTs: number }) {
+  restoreStuckRun(
+    deviceId: string,
+    run: { value: number; startTs: number; lastTs: number; validBefore?: ValidReading | null },
+  ) {
     this.stuck.restore(deviceId, run)
   }
 
@@ -127,8 +144,9 @@ export class TelemetryProcessor {
     }
 
     const { packet, sentAt } = parsed
-    this.now = this.now === null ? sentAt : Math.max(this.now, sentAt)
-    batch.now = this.now
+    const context = this.byDevice.get(packet.dev_id)
+    const accepted = !context || this.clock.accept(packet.dev_id, sentAt)
+    batch.now = this.clock.now
     batch.raw.push({
       ...base,
       device_id: packet.dev_id,
@@ -137,11 +155,14 @@ export class TelemetryProcessor {
       sampling_s: packet.samplingTime,
       saved_data: packet.saved_data ?? false,
       samples: packet.Temperature,
-      valid: true,
-      error: '',
+      valid: accepted,
+      error: accepted ? '' : 'timestamp_futuro',
     })
+    if (!accepted) {
+      batch.stats.future++
+      return
+    }
 
-    const context = this.byDevice.get(packet.dev_id)
     if (!context) {
       batch.stats.unknownDevice++
       const seen = batch.unknownDevices.get(packet.dev_id)
@@ -166,12 +187,10 @@ export class TelemetryProcessor {
       ...sample,
       quality: qualities[index] as QualityCode,
     }))
-    if (live) {
-      const retro = this.stuck.observe(packet.dev_id, classified)
-      if (retro) {
-        batch.stuck.push(retro)
-        this.touch(retro.from, retro.to)
-      }
+    const detection = live ? this.stuck.observe(packet.dev_id, classified) : null
+    if (detection?.retro) {
+      batch.stuck.push(detection.retro)
+      this.touch(detection.retro.from, detection.retro.to)
     }
 
     let lastValid: { ts: number; value: number } | null = null
@@ -190,11 +209,20 @@ export class TelemetryProcessor {
     }
     this.touch(first.ts, last.ts)
 
+    // Antes do primeiro "agora" confirmado, o contato é o horário do próprio pacote
+    const now = this.clock.now ?? sentAt
     const next: DeviceMemory = {
-      lastContactAt: Math.max(state?.lastContactAt ?? this.now, this.now),
+      lastContactAt: Math.max(state?.lastContactAt ?? now, now),
       lastSampleAt: Math.max(state?.lastSampleAt ?? last.ts, last.ts),
       lastValidAt: state?.lastValidAt ?? null,
       lastValidValue: state?.lastValidValue ?? null,
+    }
+    // O que parecia válido desde o início da sequência era o sensor travado: o dispositivo passa a
+    // falha no sensor já neste pacote, e o último valor válido volta para o de antes dela
+    if (detection && next.lastValidAt !== null && next.lastValidAt >= detection.startTs) {
+      next.lastValidAt = detection.validBefore?.ts ?? null
+      next.lastValidValue = detection.validBefore?.value ?? null
+      batch.validReset.add(packet.dev_id)
     }
     if (lastValid && (next.lastValidAt === null || lastValid.ts > next.lastValidAt)) {
       next.lastValidAt = lastValid.ts
@@ -226,14 +254,15 @@ export class TelemetryProcessor {
     this.batch = {
       source: this.source,
       lastSeq: this.batch?.lastSeq ?? 0,
-      now: this.now,
+      now: this.clock.now,
       raw: [],
       readings: [],
       stuck: [],
       devices: new Map(),
+      validReset: new Set(),
       unknownDevices: new Map(),
       touched: null,
-      stats: { packets: 0, invalid: 0, unknownDevice: 0, late: 0 },
+      stats: { packets: 0, invalid: 0, unknownDevice: 0, late: 0, future: 0 },
     }
   }
 }
