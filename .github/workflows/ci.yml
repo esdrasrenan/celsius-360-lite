@@ -20,8 +20,65 @@ jobs:
           bun-version: 1.4.3
       - run: bun install --frozen-lockfile
       - run: bun run lint
+      - name: Regras visuais do front (scripts/lint-ui.ts)
+        run: bun run lint:ui
+      - run: bun run typecheck
+      - name: Testes unitários (inclui o contraste dos tokens)
+        run: bun run test
+      - name: OpenAPI versionado igual ao gerado pelo código
+        run: |
+          bun run openapi
+          git diff --exit-code apps/api/openapi.json
+      - name: .env.example em ASCII e aceito pelo Compose
+        run: |
+          if LC_ALL=C grep -n '[^ -~]' .env.example; then
+            echo "::error file=.env.example::use só ASCII (o PowerShell 5.1 lê arquivos sem BOM como ANSI)"
+            exit 1
+          fi
+          cp .env.example .env
+          docker compose config -q
+      - name: Checagens do script de subida (sh scripts/subir.sh --so-verificar)
+        env:
+          DATA_PATH: ./test/fixtures/e2e
+        run: sh scripts/subir.sh --so-verificar
+
+  windows:
+    name: Windows (PowerShell 5.1)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
       - run: bun run typecheck
       - run: bun run test
+      # O runner não roda contêineres Linux: aqui só as checagens prévias, com dados fictícios
+      - name: scripts\subir.ps1 -SoVerificar
+        shell: powershell
+        run: |
+          # Acentos legíveis no log: o script herda a página de código do console
+          [Console]::OutputEncoding = [Text.Encoding]::UTF8
+          New-Item -ItemType Directory -Force dados\dados | Out-Null
+          Copy-Item test\fixtures\e2e\* dados\dados\
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\subir.ps1 -SoVerificar
+          if ($LASTEXITCODE -ne 1) { throw "com os arquivos em dados\dados o script devia falhar (saiu com $LASTEXITCODE)" }
+          Move-Item dados\dados\* dados\
+          Remove-Item dados\dados
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\subir.ps1 -SoVerificar
+      - name: PSScriptAnalyzer
+        shell: powershell
+        run: |
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+            # O PowerShellGet do 5.1 pede confirmação para baixar o provedor NuGet; instalado antes, não pergunta
+            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force | Out-Null
+            Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+          }
+          $results = @(Invoke-ScriptAnalyzer -Path scripts\subir.ps1)
+          $results | Format-Table RuleName, Severity, Line, Message -AutoSize -Wrap
+          # Sem BOM, o 5.1 lê o script como ANSI e estraga os acentos
+          if ($results | Where-Object { $_.Severity -eq 'Error' -or $_.RuleName -eq 'PSUseBOMForUnicodeEncodedFile' }) { exit 1 }
 
   integracao:
     name: Integração (TimescaleDB + ClickHouse)
@@ -44,8 +101,8 @@ jobs:
         options: >-
           --health-cmd "clickhouse-client --query 'SELECT 1'" --health-interval 2s --health-timeout 3s --health-retries 30
     env:
-      TEST_DATABASE_URL: postgres://celsius@localhost:5432/celsius
-      TEST_CLICKHOUSE_URL: http://localhost:8123
+      TEST_DATABASE_URL: postgres://celsius@127.0.0.1:5432/celsius
+      TEST_CLICKHOUSE_URL: http://127.0.0.1:8123
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -53,6 +110,25 @@ jobs:
           bun-version: 1.4.3
       - run: bun install --frozen-lockfile
       - run: bun run test:integration
+
+  subida:
+    name: Subida pelo script do README (sh scripts/subir.sh)
+    runs-on: ubuntu-latest
+    needs: qualidade
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sobe a stack do zero com os dados sintéticos
+        env:
+          DATA_PATH: ./test/fixtures/e2e
+          INGEST_RATE: 0
+        run: sh scripts/subir.sh
+      - name: A aplicação e o Swagger respondem
+        run: |
+          curl -fsS -o /dev/null http://127.0.0.1:8080/
+          curl -fsS -o /dev/null http://127.0.0.1:8080/api/docs
+      - name: Logs da stack
+        if: failure()
+        run: docker compose logs
 
   e2e:
     name: E2E (Compose + Playwright)
@@ -66,8 +142,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Sobe a stack com os dados sintéticos e espera a ingestão
         run: bun run e2e:stack
-      - run: bunx playwright install --with-deps chromium
-        working-directory: apps/web
+      - run: bun run e2e:install --with-deps
       - run: bun run test:e2e
       - name: Logs da stack
         if: failure()

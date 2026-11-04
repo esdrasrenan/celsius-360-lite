@@ -9,6 +9,7 @@
   "scripts": {
     "infra": "docker compose up -d timescaledb clickhouse",
     "lint": "biome check .",
+    "lint:ui": "bun run scripts/lint-ui.ts",
     "format": "biome check --write .",
     "typecheck": "bun run --filter '*' typecheck",
     "test": "bun test ./packages ./apps/web/src",
@@ -22,10 +23,11 @@
     "quality": "bun run --cwd apps/ingest src/main.ts quality",
     "dev:api": "bun run --cwd apps/api dev",
     "dev:web": "bun run --cwd apps/web dev",
-    "openapi": "bun run --cwd apps/api openapi && bun run --cwd apps/web gen:api",
+    "openapi": "bun run --cwd apps/api openapi",
     "fixture": "bun run scripts/gerar-fixture.ts",
-    "e2e:stack": "sh scripts/e2e-stack.sh",
-    "e2e:down": "sh scripts/e2e-stack.sh down"
+    "e2e:install": "bun run --cwd apps/web playwright install chromium",
+    "e2e:stack": "bun run scripts/e2e-stack.ts",
+    "e2e:down": "bun run scripts/e2e-stack.ts down"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.4",
