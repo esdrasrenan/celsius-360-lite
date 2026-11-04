@@ -1,3 +1,4 @@
+import type { Indicators } from '@celsius/contracts'
 import {
   formatDateTime,
   formatDuration,
@@ -10,27 +11,42 @@ import {
 import { type ChartModel, classify } from './model'
 import { BUCKET_TITLE, shortTimeZoneLabel } from './tooltip'
 
+/** O que o resumo repete dos KPIs do período. */
+export type ChartIndicators = Pick<Indicators, 'comfortPct' | 'minutesAbove' | 'minutesBelow'>
+
 /**
- * Resumo do gráfico para leitor de tela (seção 5.10), gerado dos próprios buckets. As partes são
- * contadas sobre as médias com a loja aberta, o que o texto diz, para não se passar pelo KPI.
+ * Resumo do gráfico para leitor de tela (seção 5.10). Com os indicadores do período, a parte na
+ * faixa e o tempo acima e abaixo são os números dos KPIs, contados em minutos de leitura; sem
+ * eles, saem dos buckets com a loja aberta, e o texto diz que são médias. Máxima e lacunas vêm
+ * sempre dos buckets.
  */
-export function describeChart(model: ChartModel, timeZone: string): string {
+export function describeChart(
+  model: ChartModel,
+  timeZone: string,
+  indicators: ChartIndicators | null = null,
+): string {
   const where = shortTimeZoneLabel(timeZone, model.from)
   const head = `${BUCKET_TITLE[model.bucket]} de ${formatDateTime(model.from, timeZone)} a ${formatDateTime(model.to, timeZone)}, ${where}.`
 
-  const open = model.points.filter((point) => point.open && point.avg != null)
-  const counts = { within: 0, above: 0, below: 0 }
-  for (const point of open) counts[classify(point.avg as number, model.range)]++
   const parts: string[] = []
-  if (open.length === 0) parts.push('Nenhuma média válida com a loja aberta')
-  else {
-    const share = (count: number) => formatPercent((count / open.length) * 100)
-    const hours = (count: number) => formatDuration((count * model.bucketMs) / 60_000)
-    parts.push(
-      `com a loja aberta, ${share(counts.within)} das médias na faixa de ${formatRange(model.range)}`,
-    )
-    if (counts.above) parts.push(`${hours(counts.above)} acima`)
-    if (counts.below) parts.push(`${hours(counts.below)} abaixo`)
+  if (indicators?.comfortPct != null) {
+    parts.push(`${formatPercent(indicators.comfortPct)} do horário na faixa de ${formatRange(model.range)}`)
+    if (indicators.minutesAbove > 0) parts.push(`${formatDuration(indicators.minutesAbove)} acima`)
+    if (indicators.minutesBelow > 0) parts.push(`${formatDuration(indicators.minutesBelow)} abaixo`)
+  } else {
+    const open = model.points.filter((point) => point.open && point.avg != null)
+    const counts = { within: 0, above: 0, below: 0 }
+    for (const point of open) counts[classify(point.avg as number, model.range)]++
+    if (open.length === 0) parts.push('Nenhuma média válida com a loja aberta')
+    else {
+      const share = (count: number) => formatPercent((count / open.length) * 100)
+      const hours = (count: number) => formatDuration((count * model.bucketMs) / 60_000)
+      parts.push(
+        `com a loja aberta, ${share(counts.within)} das médias na faixa de ${formatRange(model.range)}`,
+      )
+      if (counts.above) parts.push(`${hours(counts.above)} acima`)
+      if (counts.below) parts.push(`${hours(counts.below)} abaixo`)
+    }
   }
 
   const peak = model.points.reduce<{ t: number; value: number } | null>((best, point) => {

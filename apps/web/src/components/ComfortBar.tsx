@@ -1,7 +1,7 @@
 import { Alert02Icon, SignalNo01Icon } from '@hugeicons/core-free-icons'
 import { clsx } from 'clsx'
 import { formatDuration, formatPercent, MISSING_HINT } from '../lib/format'
-import { COMFORT_TARGET_PCT, comfortTone, TONE_CLASS } from '../lib/states'
+import { COMFORT_TARGET_PCT, COVERAGE_MIN_PCT, comfortTone, TONE_CLASS } from '../lib/states'
 import { Hint } from './Hint'
 import { Icon } from './Icon'
 
@@ -44,7 +44,7 @@ export function ComfortBar({
   const values = { within, below, above }
   const hasData = within != null
   const tone = comfortTone(within)
-  const lowCoverage = coverage != null && coverage < COMFORT_TARGET_PCT
+  const lowCoverage = coverage != null && coverage < COVERAGE_MIN_PCT
   const minutes = { within: undefined, below: belowMinutes, above: aboveMinutes }
 
   const described = SEGMENTS.filter((segment) => values[segment.key] != null)

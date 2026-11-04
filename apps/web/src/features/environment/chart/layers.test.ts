@@ -99,21 +99,28 @@ describe('camadas como séries próprias (seção 5.1, achados 29 e 45)', () => 
     const [closed, open] = temperatureLayers(model, theme)
     expect(closed?.name).toBe(open?.name as string)
     const closedData = closed?.data as Array<[number, number | null]>
-    const openData = open?.data as Array<[number, number | null]>
-    // 10h abre: a série de fora repete o primeiro ponto aberto e a de dentro começa nele
+    const openData = open?.data as Array<[number, number | null] | { value: unknown; symbol: string }>
+    // 10h abre: o trecho 9h→10h é do bucket das 9h (fechado); o das 10h já sai colorido
     expect(closedData[10]?.[1]).toBe(24)
-    expect(openData[9]?.[1]).toBeNull()
-    expect(openData[10]?.[1]).toBe(24)
+    expect(openData[9]).toEqual([at(9), null])
+    expect(openData[10]).toEqual([at(10), 24])
     expect(closedData[12]?.[1]).toBeNull()
+    // 22h fecha: o trecho 21h→22h é do bucket das 21h (aberto) e sai colorido até as 22h, como a
+    // faixa e a tira; o ponto das 22h só fecha a linha, sem símbolo colorido no hover
+    expect(closedData[21]?.[1]).toBeNull()
+    expect(closedData[22]).toEqual([at(22), 23])
+    expect(openData[22]).toEqual({ value: [at(22), 23], symbol: 'none' })
+    expect(openData[23]).toEqual([at(23), null])
     expect(open?.smooth).toBe(false)
     expect(open?.connectNulls).toBe(false)
     expect(open?.lineStyle?.width).toBe(2)
     expect(closed?.lineStyle).toEqual({ color: 'foraHorario', width: 1.25 })
   })
 
-  test('visualMap por faixa, só na série do expediente', () => {
-    const map = temperatureVisualMap(model, theme, 12)
-    expect(map).toMatchObject({ type: 'piecewise', dimension: 1, seriesIndex: 12 })
+  test('visualMap por faixa, só na série do expediente, apontada pelo id', () => {
+    const map = temperatureVisualMap(model, theme)
+    expect(map).toMatchObject({ type: 'piecewise', dimension: 1, seriesId: 'temperature' })
+    expect(map).not.toHaveProperty('seriesIndex')
     expect((map as { pieces: unknown[] }).pieces).toEqual([
       { lt: 21, color: 'abaixo' },
       { gte: 21, lte: 25, color: 'temperatura' },

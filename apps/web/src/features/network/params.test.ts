@@ -1,6 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import type { StoreListItem } from '@celsius/contracts'
-import { defaultOpen, environmentMatches, filterCount, nextView, parseView, serializeView } from './params'
+import {
+  defaultOpen,
+  environmentMatches,
+  filterCount,
+  filtersOf,
+  nextView,
+  parseView,
+  serializeView,
+} from './params'
 
 const parse = (query: string) => parseView(new URLSearchParams(query))
 const canonical = (query: string) => serializeView(parse(query)).toString()
@@ -41,6 +49,8 @@ describe('parseView', () => {
     expect(parse('pagina=-2').page).toBe(1)
     expect(parse('pagina=2.5').page).toBe(1)
     expect(parse('pagina=abc').page).toBe(1)
+    // Caractere de controle no id não chega à API
+    expect(parse('loja=%00&cliente=a%00b')).toMatchObject({ storeId: null, clientId: null })
   })
 
   test('valores válidos', () => {
@@ -106,6 +116,26 @@ describe('nextView', () => {
   test('página e abertura não mexem no resto', () => {
     expect(nextView(base, { page: 4 })).toMatchObject({ page: 4, open: ['LOJA-A'] })
     expect(nextView(base, { open: [] })).toMatchObject({ page: 3, open: [] })
+  })
+
+  test('o "Aplicar" da gaveta volta à página 1 e à abertura padrão, como a pílula do desktop', () => {
+    const view = parse('pagina=3&abertas=LOJA-A&busca=rio')
+    const draft = { ...filtersOf(view), status: 'offline' as const }
+    expect(serializeView(nextView(view, draft)).toString()).toBe('busca=rio&status=offline')
+    expect(serializeView(nextView(view, draft))).toEqual(serializeView(nextView(view, { status: 'offline' })))
+  })
+})
+
+test('filtersOf leva só os campos da gaveta (sem busca, período, página nem abertas)', () => {
+  expect(
+    filtersOf(parse('periodo=7d&busca=x&cliente=C&loja=L&status=online&ordem=name&pagina=2&abertas=')),
+  ).toEqual({
+    clientId: 'C',
+    storeId: 'L',
+    sort: 'name',
+    status: 'online',
+    belowTarget: false,
+    outOfRange: false,
   })
 })
 

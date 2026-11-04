@@ -20,6 +20,7 @@ import { ErrorState } from '../../components/ErrorState'
 import { ProgressBar } from '../../components/ProgressBar'
 import { Skeleton } from '../../components/Skeleton'
 import { prefersReducedMotion } from '../../lib/chart-theme'
+import { downloadCsv } from '../../lib/csv'
 import { formatPeriod, formatTimeZoneLabel } from '../../lib/format'
 import { PERIOD_LABEL } from '../../lib/states'
 import { useDocumentTitle } from '../../lib/useDocumentTitle'
@@ -31,6 +32,7 @@ import {
   compareAvailability,
   csvFileName,
   gapsCsv,
+  keepSamePeriod,
   parsePeriod,
   previousRange,
   seriesCsv,
@@ -44,15 +46,6 @@ import { WeeklyProfile } from './WeeklyProfile'
 
 const HOUR_MS = 3_600_000
 const CHART_ID = 'grafico-temperatura'
-
-function download(name: string, content: string) {
-  const url = URL.createObjectURL(new Blob([content], { type: 'text/csv;charset=utf-8' }))
-  const link = Object.assign(document.createElement('a'), { href: url, download: name })
-  document.body.append(link)
-  link.click()
-  link.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
 
 const scrollBehavior = (): ScrollBehavior => (prefersReducedMotion() ? 'auto' : 'smooth')
 
@@ -108,6 +101,9 @@ export function EnvironmentPage() {
 
   const summary = useEnvironmentSummary(id, period)
   const series = useEnvironmentSeries(id, period)
+  // A tendência do cabeçalho fala do agora: sai sempre das médias de 5 min das últimas 24 horas,
+  // não da série do período (em 30 dias, 4 buckets seriam 4 horas). Em 24 horas é a mesma consulta
+  const recent = useEnvironmentSeries(id, '1d')
   const profile = useEnvironmentProfile(id, period, { enabled: weekly })
   const daily = useEnvironmentDaily(id, period, { enabled: weekly })
   const prefetch = usePrefetchEnvironment()
@@ -119,15 +115,27 @@ export function EnvironmentPage() {
   // Período anterior: só com o resumo do período atual já carregado (não o da troca em curso)
   const settled = summary.data && !summary.isPlaceholderData ? summary.data : undefined
   const previous = settled ? previousRange(settled.period) : { from: '', to: '' }
-  const previousSummary = useQuery({ ...queries.summary(id, previous), enabled: settled != null })
+  // No tempo real a chave do anterior anda a cada bucket: a comparação não pode piscar
+  const keepPrevious = keepSamePeriod(id, previous)
+  const previousSummary = useQuery({
+    ...queries.summary(id, previous),
+    enabled: settled != null,
+    placeholderData: keepPrevious,
+  })
   const timeZone = summary.data?.store.timezone ?? 'America/Sao_Paulo'
+  // Série do período atual; na troca, a do período anterior fica na tela, mas não vale para nada
+  const currentSeries = series.data && !series.isPlaceholderData ? series.data : undefined
   const availability = compareAvailability(
     settled ? previousSummary.data : undefined,
-    series.isPlaceholderData ? undefined : series.data,
+    currentSeries,
     timeZone,
   )
   const comparing = compare && availability.ok
-  const previousSeries = useQuery({ ...queries.series(id, previous), enabled: comparing })
+  const previousSeries = useQuery({
+    ...queries.series(id, previous),
+    enabled: comparing,
+    placeholderData: keepPrevious,
+  })
 
   // "<Ambiente> · <Loja> · Celsius 360"
   const notFound = summary.error instanceof ApiError && summary.error.status === 404
@@ -192,12 +200,12 @@ export function EnvironmentPage() {
   }
 
   const downloadSeries = (current: Series) =>
-    download(
+    downloadCsv(
       csvFileName(data.environment.id, period, nowAt, store.timezone),
       seriesCsv(current, store.timezone, zoneLabel),
     )
   const downloadGaps = (current: Series) =>
-    download(
+    downloadCsv(
       csvFileName(data.environment.id, period, nowAt, store.timezone, 'lacunas'),
       gapsCsv(current, store.timezone, zoneLabel),
     )
@@ -222,8 +230,8 @@ export function EnvironmentPage() {
         <EnvironmentHeader
           summary={data}
           trend={
-            series.data && !series.isPlaceholderData
-              ? trendPerHour(series.data, data.status.lastValidAt)
+            recent.data && !recent.isPlaceholderData
+              ? trendPerHour(recent.data, data.status.lastValidAt)
               : null
           }
         />
@@ -243,10 +251,11 @@ export function EnvironmentPage() {
           compare={comparing}
           compareAvailability={availability}
           onCompareChange={setCompare}
+          seriesStatus={currentSeries ? 'ready' : series.isError ? 'error' : 'loading'}
           onShowTable={showTable}
-          onDownloadSeries={() => series.data && downloadSeries(series.data)}
-          onDownloadGaps={() => series.data && downloadGaps(series.data)}
-          gapCount={series.data?.gaps.length ?? 0}
+          onDownloadSeries={() => currentSeries && downloadSeries(currentSeries)}
+          onDownloadGaps={() => currentSeries && downloadGaps(currentSeries)}
+          gapCount={currentSeries?.gaps.length ?? 0}
           onPrint={() => setTimeout(() => window.print(), 150)}
         />
         <PeriodKpis indicators={indicators} comparison={comparison} busy={busy} />
@@ -262,6 +271,7 @@ export function EnvironmentPage() {
               ref={chart}
               series={series.data}
               previous={comparing ? (previousSeries.data ?? null) : null}
+              indicators={settled && currentSeries ? settled.indicators : null}
               timeZone={store.timezone}
               title="Temperatura"
             />
@@ -317,15 +327,16 @@ export function EnvironmentPage() {
         />
       )}
 
-      {series.data && (
+      {/* Só com a série do período: na troca, a anterior sairia com o nome do novo período */}
+      {currentSeries && (
         <DataTable
           key={period}
-          series={series.data}
+          series={currentSeries}
           timeZone={store.timezone}
           timeZoneLabel={zoneLabel}
           open={tableOpen}
           onOpenChange={setTableOpen}
-          onDownload={() => series.data && downloadSeries(series.data)}
+          onDownload={() => downloadSeries(currentSeries)}
         />
       )}
     </div>

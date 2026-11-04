@@ -1,4 +1,5 @@
 import type { Period, PeriodKey } from '@celsius/contracts'
+import { PERIOD_KEYS } from '@celsius/domain'
 import {
   ArrowDataTransferHorizontalIcon,
   ArrowDown01Icon,
@@ -14,11 +15,15 @@ import { Menu } from '../../components/Menu'
 import { SegmentedControl } from '../../components/SegmentedControl'
 import { formatPeriod, formatTimeZoneLabel } from '../../lib/format'
 import { PERIOD_FULL_LABEL, PERIOD_LABEL } from '../../lib/states'
-import { type Availability, PERIODS, periodRangeEndingAt } from './detail'
+import { type Availability, periodRangeEndingAt } from './detail'
+
+/** Série do período atual: pronta, ainda carregando (ou na troca de período) ou com erro. */
+export type SeriesStatus = 'ready' | 'loading' | 'error'
 
 /**
  * Barra do cartão do período: segmentado (com pré-carga e push), intervalo no fuso da loja e as
- * ações Comparar, Ver tabela e Exportar. As ações não vão para a impressão.
+ * ações Comparar, Ver tabela e Exportar. Tabela e CSV esperam a série do período atual; as ações
+ * não vão para a impressão.
  */
 export function PeriodToolbar({
   period,
@@ -29,6 +34,7 @@ export function PeriodToolbar({
   compare,
   compareAvailability,
   onCompareChange,
+  seriesStatus,
   onShowTable,
   onDownloadSeries,
   onDownloadGaps,
@@ -43,6 +49,7 @@ export function PeriodToolbar({
   compare: boolean
   compareAvailability: Availability
   onCompareChange: (compare: boolean) => void
+  seriesStatus: SeriesStatus
   onShowTable: () => void
   onDownloadSeries: () => void
   onDownloadGaps: () => void
@@ -50,7 +57,7 @@ export function PeriodToolbar({
   onPrint: () => void
 }) {
   const zone = formatTimeZoneLabel(timeZone, range.to)
-  const options = PERIODS.map((value) => {
+  const options = PERIOD_KEYS.map((value) => {
     const exact = periodRangeEndingAt(value, range.to)
     return {
       value,
@@ -61,9 +68,12 @@ export function PeriodToolbar({
   })
   const compareLabel = `Comparar com ${PERIOD_LABEL[period]} anteriores`
   const unavailable = !compareAvailability.ok
+  // Sem a série atual, "Nenhuma" lacuna seria uma afirmação sobre um dado que não se tem
+  const seriesMissing =
+    seriesStatus === 'ready' ? null : seriesStatus === 'error' ? 'Indisponível' : 'Carregando'
 
   return (
-    <div className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between lg:gap-6 print:py-3">
+    <div className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between lg:gap-6 lg:py-2 print:py-3">
       <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
         <SegmentedControl
           legend="Período"
@@ -80,7 +90,8 @@ export function PeriodToolbar({
           <span className="whitespace-nowrap">{zone}</span>
         </p>
       </div>
-      <div className="nao-imprimir flex flex-wrap items-center gap-2">
+      {/* As ações não encolhem: em 1024 o intervalo quebra antes de o Exportar cair sozinho */}
+      <div className="nao-imprimir flex flex-wrap items-center gap-2 lg:shrink-0">
         <Hint
           content={
             compareAvailability.ok
@@ -102,9 +113,22 @@ export function PeriodToolbar({
           </Button>
         </Hint>
         {/* No celular, Tabela e Exportar ficam só com o ícone (o nome acessível continua) */}
-        <Button icon={Table01Icon} aria-label="Ver tabela" onClick={onShowTable} className="max-sm:px-3">
-          <span className="hidden sm:inline">Ver tabela</span>
-        </Button>
+        <Hint
+          content={
+            seriesStatus === 'error' ? 'A série do período não carregou' : 'Carregando a série do período…'
+          }
+          disabled={seriesMissing == null}
+        >
+          <Button
+            icon={Table01Icon}
+            aria-label="Ver tabela"
+            aria-disabled={seriesMissing != null || undefined}
+            onClick={() => seriesMissing == null && onShowTable()}
+            className="aria-disabled:opacity-50 max-sm:px-3"
+          >
+            <span className="hidden sm:inline">Ver tabela</span>
+          </Button>
+        </Hint>
         <Menu
           trigger={
             <Button icon={Download04Icon} aria-label="Exportar" className="max-sm:gap-1 max-sm:px-3">
@@ -113,13 +137,19 @@ export function PeriodToolbar({
             </Button>
           }
           items={[
-            { label: 'Baixar CSV da série', icon: Csv01Icon, onSelect: onDownloadSeries },
+            {
+              label: 'Baixar CSV da série',
+              icon: Csv01Icon,
+              onSelect: onDownloadSeries,
+              disabled: seriesMissing != null,
+              aux: seriesMissing ?? undefined,
+            },
             {
               label: 'Baixar CSV das lacunas',
               icon: Csv01Icon,
               onSelect: onDownloadGaps,
-              disabled: gapCount === 0,
-              aux: gapCount === 0 ? 'Nenhuma' : undefined,
+              disabled: seriesMissing != null || gapCount === 0,
+              aux: seriesMissing ?? (gapCount === 0 ? 'Nenhuma' : undefined),
             },
             'separator',
             { label: 'Imprimir ou salvar PDF', icon: PrinterIcon, onSelect: onPrint },

@@ -1,11 +1,12 @@
 import { clsx } from 'clsx'
 import { type ReactNode, useState } from 'react'
-import { Link, Navigate, Outlet, useLocation } from 'react-router'
+import { Link, Navigate, Outlet, useLocation, useNavigation } from 'react-router'
 import { useLogout, useSession } from '../api/queries'
 import { useSessionExpired } from '../api/query-client'
 import { loginPath } from '../features/auth/redirect'
 import { useLiveUpdates } from '../lib/live'
 import { ErrorState } from './ErrorState'
+import { ProgressBar } from './ProgressBar'
 import { BRAND_HOME_LABEL, BrandLockup } from './shell/BrandLockup'
 import { useScrolledPast } from './shell/hooks'
 import { LiveChip } from './shell/LiveChip'
@@ -15,15 +16,18 @@ import { UserMenu } from './shell/UserMenu'
 /**
  * Moldura de todas as telas logadas: link de pular, cabeçalho fixo (transparente no topo, com
  * superfície e blur depois de 8 px de rolagem) e o <main>. Também desenha o estado de espera da
- * sessão, para o logo não pular entre a carga e a tela.
+ * sessão, para o logo não pular entre a carga e a tela. `busy` é a navegação esperando a próxima
+ * tela (o chunk do detalhe, em rede lenta): barra no topo do cabeçalho e aria-busy no <main>.
  */
 function ShellFrame({
   nav,
   actions,
+  busy = false,
   children,
 }: {
   nav?: ReactNode
   actions?: ReactNode
+  busy?: boolean
   children?: ReactNode
 }) {
   const [sentinel, setSentinel] = useState<HTMLSpanElement | null>(null)
@@ -48,6 +52,7 @@ function ShellFrame({
           scrolled ? 'border-borda bg-superficie/90 backdrop-blur-md' : 'border-transparent',
         )}
       >
+        <ProgressBar active={busy} label="Carregando a página" />
         <div className="mx-auto flex h-full max-w-conteudo items-center gap-8 px-4 sm:px-6 lg:px-8">
           <Link to="/" aria-label={BRAND_HOME_LABEL} className="shrink-0 rounded-sm">
             <BrandLockup />
@@ -59,6 +64,7 @@ function ShellFrame({
       <main
         id="conteudo"
         tabIndex={-1}
+        aria-busy={busy || undefined}
         className="mx-auto max-w-conteudo px-4 pt-6 pb-16 outline-none sm:px-6 md:pt-8 lg:px-8"
       >
         {children}
@@ -72,6 +78,7 @@ export function AppShell() {
   const expired = useSessionExpired()
   const logout = useLogout()
   const location = useLocation()
+  const navigation = useNavigation()
   // Sair é escolha do usuário: vai para /entrar sem "voltar", e o próximo perfil começa na rede
   const [leaving, setLeaving] = useState(false)
   useLiveUpdates(!!session.data)
@@ -100,6 +107,7 @@ export function AppShell() {
   return (
     <ShellFrame
       nav={<MainNav entries={nav} />}
+      busy={navigation.state === 'loading'}
       actions={
         <>
           <LiveChip />

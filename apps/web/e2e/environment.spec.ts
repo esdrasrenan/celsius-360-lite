@@ -103,6 +103,32 @@ test.describe('detalhe do ambiente', () => {
     expect(await readFile(await gaps.path(), 'utf8')).toContain('Sensor travado')
   })
 
+  test('série com erro: tabela e CSV indisponíveis, sem afirmar que não há lacunas', async ({ page }) => {
+    await page.route('**/api/v1/environments/AMB-T1/series**', (route) =>
+      route.fulfill({
+        status: 500,
+        contentType: 'application/problem+json',
+        body: JSON.stringify({
+          type: 'about:blank',
+          title: 'Internal Server Error',
+          status: 500,
+          detail: '',
+        }),
+      }),
+    )
+    await page.goto('/ambientes/AMB-T1?periodo=7d')
+    // O 5xx é repetido duas vezes (1 s e 2 s) antes de virar erro no cartão do gráfico
+    await expect(page.getByRole('button', { name: 'Tentar de novo' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('button', { name: 'Ver tabela' })).toHaveAttribute('aria-disabled', 'true')
+    await page.getByRole('button', { name: 'Exportar' }).click()
+    const series = page.getByRole('menuitem', { name: /Baixar CSV da série/ })
+    const gaps = page.getByRole('menuitem', { name: /Baixar CSV das lacunas/ })
+    await expect(series).toHaveAttribute('aria-disabled', 'true')
+    await expect(series).toContainText('Indisponível')
+    await expect(gaps).toContainText('Indisponível')
+    await expect(gaps).not.toContainText('Nenhuma')
+  })
+
   test('comparar: sem base em 30 dias, desabilitado com a dica', async ({ page }) => {
     await page.goto('/ambientes/AMB-T1?periodo=30d')
     const compare = page.getByRole('button', { name: 'Comparar com 30 dias anteriores' })

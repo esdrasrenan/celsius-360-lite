@@ -1,7 +1,7 @@
 import type { ClientListItem, StoreFacets, StoreSort } from '@celsius/contracts'
 import { Building03Icon, FilterHorizontalIcon } from '@hugeicons/core-free-icons'
 import { clsx } from 'clsx'
-import { type RefObject, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { type RefObject, useEffect, useRef, useState } from 'react'
 import { Button } from '../../components/Button'
 import { Combobox } from '../../components/Combobox'
 import { FilterChip } from '../../components/FilterChip'
@@ -10,9 +10,10 @@ import { SearchField } from '../../components/SearchField'
 import { PillGroup } from '../../components/SegmentedControl'
 import { Select } from '../../components/Select'
 import { Sheet } from '../../components/Sheet'
+import { useMediaQuery } from '../../components/shell/hooks'
 import { formatInteger, plural } from '../../lib/format'
 import { COMFORT_TARGET_PCT, SORT_LABEL, STORE_STATE } from '../../lib/states'
-import { CLEARED_FILTERS, type NetworkView, SEARCH_MAX, type StatusFilter } from './params'
+import { CLEARED_FILTERS, filtersOf, type NetworkView, SEARCH_MAX, type StatusFilter } from './params'
 
 const SORT_OPTIONS = (Object.keys(SORT_LABEL) as StoreSort[]).map((value) => ({
   value,
@@ -24,27 +25,18 @@ const ALL_CLIENTS = 'todos'
 /** Até 7 clientes cabem num Select; acima disso, o Combobox com busca (seção 3.3). */
 const COMBOBOX_FROM = 8
 
-function useMediaQuery(media: string): boolean {
-  return useSyncExternalStore(
-    (onChange) => {
-      const query = window.matchMedia(media)
-      query.addEventListener('change', onChange)
-      return () => query.removeEventListener('change', onChange)
-    },
-    () => window.matchMedia(media).matches,
-  )
-}
-
 /**
  * Texto de exemplo na medida da largura da busca: abaixo de lg ela divide a linha com os selects
- * (ou com "Filtros", no celular), e o texto inteiro viraria "Buscar l…".
+ * (ou com "Filtros", no celular), e o texto inteiro viraria "Buscar l…". De 768 a 800 px ela
+ * fica com menos de 260 px ao lado dos dois selects, e nem "Buscar loja ou ambiente" cabe.
  */
 function useSearchPlaceholder(singleStore: boolean): string {
   const large = useMediaQuery('(min-width: 64rem)')
   const small = useMediaQuery('(min-width: 40rem)')
+  const tight = useMediaQuery('(48rem <= width < 50rem)')
   if (singleStore) return small ? 'Buscar ambiente ou dispositivo' : 'Buscar ambiente'
   if (large) return 'Buscar loja, ambiente, cidade, cliente ou dispositivo'
-  return small ? 'Buscar loja ou ambiente' : 'Buscar'
+  return small && !tight ? 'Buscar loja ou ambiente' : 'Buscar'
 }
 
 function statusOptions(facets: StoreFacets | undefined) {
@@ -61,8 +53,8 @@ function statusOptions(facets: StoreFacets | undefined) {
 }
 
 /**
- * Pílula liga/desliga (aria-pressed), com a mesma forma das pílulas de telemetria. A dica diz o
- * que a contagem conta (lojas, enquanto o KPI conta ambientes).
+ * Pílula liga/desliga (aria-pressed), com a mesma forma das pílulas de telemetria. O rótulo começa
+ * por "Lojas": ao lado, o KPI de mesmo nome conta ambientes, e os números diferem.
  */
 function TogglePill({
   label,
@@ -87,8 +79,9 @@ function TogglePill({
           'pressionavel inline-flex h-controle-sm items-center gap-1.5 whitespace-nowrap rounded-full px-3 font-medium text-apoio ring-1 ring-inset',
           pressed
             ? 'bg-inverso text-texto-inverso ring-inverso'
-            : 'bg-superficie text-texto-2 ring-borda hover:bg-superficie-2 hover:text-texto',
-          count === 0 && !pressed && 'opacity-55',
+            : 'bg-superficie ring-borda hover:bg-superficie-2 hover:text-texto',
+          // Contagem zero esmaece pela cor (texto-3, 5,66:1): a pílula continua clicável
+          !pressed && (count === 0 ? 'text-texto-3' : 'text-texto-2'),
         )}
       >
         {label}
@@ -173,11 +166,9 @@ function SortSelect({
   )
 }
 
-type Draft = Pick<NetworkView, 'clientId' | 'sort' | 'status' | 'belowTarget' | 'outOfRange' | 'storeId'>
-
 /**
  * Barra de filtros (seção 3.10). Linha 1: busca, cliente e "Ordenar por". Linha 2: chips dos
- * filtros ativos, pílulas de telemetria com contagem, "Fora da meta" e "Limpar filtros". No
+ * filtros ativos, pílulas de telemetria com contagem, "Lojas fora da meta" e "Limpar filtros". No
  * celular, cliente, ordem e pílulas vão para a gaveta "Filtros (n)".
  */
 export function FilterBar({
@@ -209,7 +200,7 @@ export function FilterBar({
   const chipsRef = useRef<HTMLDivElement>(null)
   const pendingFocus = useRef<number | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
-  const [draft, setDraft] = useState<Draft>(view)
+  const [draft, setDraft] = useState(() => filtersOf(view))
   const placeholder = useSearchPlaceholder(singleStore)
 
   const showClients = !singleStore && clients !== undefined && clients.length > 1
@@ -257,7 +248,7 @@ export function FilterBar({
   })
 
   const openSheet = (open: boolean) => {
-    if (open) setDraft(view)
+    if (open) setDraft(filtersOf(view))
     setSheetOpen(open)
   }
 
@@ -273,7 +264,7 @@ export function FilterBar({
           busy={busy}
           inputRef={searchRef}
           // Sozinha na linha (escopo de uma loja), a busca não precisa atravessar a página
-          className={clsx('min-w-0 flex-1 md:min-w-60', singleStore && 'sm:max-w-112')}
+          className={clsx('min-w-0 flex-1 md:min-w-52', singleStore && 'sm:max-w-112')}
         />
         {!singleStore && (
           <div className="hidden md:contents">
@@ -300,7 +291,7 @@ export function FilterBar({
             }
             footer={
               <>
-                <Button variant="ghost" onClick={() => setDraft({ ...draft, ...CLEARED_FILTERS })}>
+                <Button variant="ghost" onClick={() => setDraft(filtersOf({ ...draft, ...CLEARED_FILTERS }))}>
                   Limpar
                 </Button>
                 <Button
@@ -345,14 +336,14 @@ export function FilterBar({
                 <span className="font-medium text-apoio text-texto-3">Conforto no período</span>
                 <div className="flex flex-wrap gap-2">
                   <TogglePill
-                    label="Fora da meta"
+                    label="Lojas fora da meta"
                     hint={BELOW_TARGET_HINT}
                     count={facets?.belowTarget}
                     pressed={draft.belowTarget}
                     onToggle={() => setDraft({ ...draft, belowTarget: !draft.belowTarget })}
                   />
                   <TogglePill
-                    label="Fora da faixa agora"
+                    label="Lojas fora da faixa agora"
                     hint={OUT_OF_RANGE_HINT}
                     count={facets?.outOfRange}
                     pressed={draft.outOfRange}
@@ -390,9 +381,10 @@ export function FilterBar({
                 options={statusOptions(facets)}
                 onValueChange={(status) => update({ status })}
               />
-              <span aria-hidden="true" className="mx-1 h-5 w-px bg-borda-forte" />
+              {/* Abaixo de lg a pílula da meta pode descer de linha, e o divisor ficaria pendurado */}
+              <span aria-hidden="true" className="mx-1 hidden h-5 w-px bg-borda-forte lg:block" />
               <TogglePill
-                label="Fora da meta"
+                label="Lojas fora da meta"
                 hint={BELOW_TARGET_HINT}
                 count={facets?.belowTarget}
                 pressed={view.belowTarget}

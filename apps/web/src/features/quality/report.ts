@@ -1,4 +1,5 @@
 import type { DiscardReason, PeriodKey, QualityReport } from '@celsius/contracts'
+import { type CsvValue, toCsv } from '../../lib/csv'
 import {
   formatDuration,
   formatInteger,
@@ -199,32 +200,13 @@ export function environmentHref(environmentId: string, from: string, now: string
 
 export interface CsvColumn<T> {
   header: string
-  value: (row: T) => string | number | null
+  value: (row: T) => CsvValue
 }
 
-const CSV_SEPARATOR = ';'
-
-function csvCell(value: string | number | null): string {
-  if (value == null) return ''
-  // Decimal com vírgula, sem separador de milhar: o Excel em pt-BR abre com ";" e lê os números
-  const text = typeof value === 'number' ? String(value).replace('.', ',') : value
-  return /[";\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
-}
-
-export function toCsv<T>(columns: readonly CsvColumn<T>[], rows: readonly T[]): string {
-  const lines = [
-    columns.map((column) => csvCell(column.header)),
-    ...rows.map((row) => columns.map((column) => csvCell(column.value(row)))),
-  ]
-  return `${lines.map((cells) => cells.join(CSV_SEPARATOR)).join('\r\n')}\r\n`
-}
-
-/** Baixa o CSV com BOM, para o Excel reconhecer o UTF-8 dos acentos. */
-export function downloadCsv(filename: string, csv: string) {
-  const url = URL.createObjectURL(new Blob(['﻿', csv], { type: 'text/csv;charset=utf-8' }))
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  link.click()
-  setTimeout(() => URL.revokeObjectURL(url), 0)
+/** CSV de uma tabela do relatório. lib/csv.ts neutraliza a fórmula, como num dev_id cru da telemetria. */
+export function tableCsv<T>(columns: readonly CsvColumn<T>[], rows: readonly T[]): string {
+  return toCsv([
+    columns.map((column) => column.header),
+    ...rows.map((row) => columns.map((column) => column.value(row))),
+  ])
 }

@@ -11,8 +11,8 @@ export interface Column<T> {
 }
 
 /**
- * Tabela do relatório: <table> a partir de md e lista empilhada no celular, com o mesmo conteúdo.
- * Sem rolagem horizontal em 320 px.
+ * Tabela do relatório: <table> a partir de lg e lista empilhada abaixo dele, com o mesmo conteúdo.
+ * As colunas fixas somam quase 700 px, e no tablet a coluna do nome ficaria com dois caracteres.
  */
 export function DataTable<T>({
   label,
@@ -32,7 +32,7 @@ export function DataTable<T>({
 }) {
   return (
     <>
-      <table className="hidden w-full table-fixed border-collapse text-corpo md:table">
+      <table className="hidden w-full table-fixed border-collapse text-corpo lg:table">
         <caption className="so-leitor">{label}</caption>
         <thead>
           <tr className="h-cabecalho-tabela bg-superficie-2 text-legenda text-texto-3">
@@ -69,7 +69,7 @@ export function DataTable<T>({
           ))}
         </tbody>
       </table>
-      <ul aria-label={label} className="divide-y divide-borda border-borda border-t md:hidden">
+      <ul aria-label={label} className="divide-y divide-borda border-borda border-t lg:hidden">
         {rows.map((row) => (
           <li key={rowKey(row)} className={clsx('px-4 py-3', muted?.(row) && 'text-texto-3')}>
             {mobileRow(row)}

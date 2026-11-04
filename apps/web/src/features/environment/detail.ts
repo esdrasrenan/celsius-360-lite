@@ -7,9 +7,10 @@ import type {
   PeriodKey,
   ProfileCell,
   Series,
-  SeriesBucket,
   SeriesPoint,
 } from '@celsius/contracts'
+import { BUCKET_MS, PERIODS } from '@celsius/domain'
+import { toCsv } from '../../lib/csv'
 import { formatDuration, formatPercent, NBSP } from '../../lib/format'
 import { gapState, PERIOD_LABEL } from '../../lib/states'
 
@@ -19,22 +20,16 @@ import { gapState, PERIOD_LABEL } from '../../lib/states'
  */
 
 const HOUR_MS = 3_600_000
-const BUCKET_MS: Record<SeriesBucket, number> = { raw: 30_000, '5m': 300_000, '15m': 900_000, '1h': HOUR_MS }
-
-export const PERIODS: readonly PeriodKey[] = ['1d', '7d', '30d']
 
 /** Período da URL; valor ausente ou inválido cai em 24 horas. */
 export function parsePeriod(value: string | null): PeriodKey {
   return value != null && Object.hasOwn(PERIOD_LABEL, value) ? (value as PeriodKey) : '1d'
 }
 
-const DAY_MS = 86_400_000
-const PERIOD_DAYS: Record<PeriodKey, number> = { '1d': 1, '7d': 7, '30d': 30 }
-
 /** Intervalo de um período nomeado que termina em `to` (os três terminam no mesmo instante). */
 export function periodRangeEndingAt(key: PeriodKey, to: string): { from: string; to: string } {
   const end = Date.parse(to)
-  return { from: new Date(end - PERIOD_DAYS[key] * DAY_MS).toISOString(), to: new Date(end).toISOString() }
+  return { from: new Date(end - PERIODS[key].durationMs).toISOString(), to: new Date(end).toISOString() }
 }
 
 /** Período anterior: o mesmo comprimento, terminando onde o atual começa (seção 5.8). */
@@ -42,6 +37,26 @@ export function previousRange(period: Pick<Period, 'from' | 'to'>): { from: stri
   const from = Date.parse(period.from)
   const length = Date.parse(period.to) - from
   return { from: new Date(from - length).toISOString(), to: new Date(from).toISOString() }
+}
+
+/** Comprimento, em ms, de um intervalo explícito (o `range` das chaves de api/queries.ts). */
+function rangeLength(range: unknown): number | null {
+  const { from, to } = (range ?? {}) as { from?: string; to?: string }
+  return from && to ? Date.parse(to) - Date.parse(from) : null
+}
+
+/**
+ * placeholderData das consultas do período anterior. No tempo real o período anda a cada bucket, e
+ * a chave do anterior anda junto: até a nova chegar, vale a resposta da chave velha do mesmo
+ * ambiente e do mesmo comprimento, e a comparação não pisca. Troca de período ou de ambiente nunca
+ * herda nada (seria o anterior de outro período).
+ */
+export function keepSamePeriod(id: string, range: { from: string; to: string }) {
+  const length = rangeLength(range)
+  return <T>(data: T | undefined, query?: { queryKey: readonly unknown[] }): T | undefined =>
+    length != null && query?.queryKey[1] === id && rangeLength(query.queryKey[3]) === length
+      ? data
+      : undefined
 }
 
 /**
@@ -78,6 +93,13 @@ export function overlapMinutes(from: string, to: string, intervals: readonly Int
 /** Duração que nunca quebra no meio: "16 h 35 min" fica numa linha só (achado 17). */
 export const unbrokenDuration = (minutes: number, mode?: 'hours' | 'calendar') =>
   formatDuration(minutes, mode).replaceAll(' ', NBSP)
+
+/**
+ * Tempo coberto, arredondado para baixo como o percentual da cobertura: "63 h de 64 h" ao lado de
+ * 99,6%, nunca "64 h de 64 h". Acima de 48 h a duração sai em horas inteiras.
+ */
+export const coveredDuration = (minutes: number) =>
+  unbrokenDuration(minutes > 48 * 60 ? Math.floor(minutes / 60) * 60 : Math.floor(minutes))
 
 export const gapMinutes = (gap: Pick<Gap, 'from' | 'to'>) =>
   (Date.parse(gap.to) - Date.parse(gap.from)) / 60_000
@@ -134,20 +156,8 @@ export function seriesRows(series: Series): SeriesRow[] {
 }
 
 /* -------------------------------------------------------------------------------------------
-   CSV: separador ";", vírgula decimal e BOM UTF-8, para abrir certo no Excel em pt-BR.
+   CSV (lib/csv.ts): separador ";", vírgula decimal e BOM UTF-8, para abrir certo no Excel em pt-BR.
    ------------------------------------------------------------------------------------------- */
-
-const csvDecimal = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2, useGrouping: false })
-
-function csvCell(value: string | number | null): string {
-  if (value == null) return ''
-  const text = typeof value === 'number' ? csvDecimal.format(value) : value
-  return /[";\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
-}
-
-function toCsv(rows: ReadonlyArray<ReadonlyArray<string | number | null>>): string {
-  return `﻿${rows.map((row) => row.map(csvCell).join(';')).join('\r\n')}\r\n`
-}
 
 const csvDateFormatters = new Map<string, Intl.DateTimeFormat>()
 

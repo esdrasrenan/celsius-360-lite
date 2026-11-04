@@ -217,4 +217,16 @@ test.describe('celular', () => {
     expect(tip.y + tip.height).toBeLessThanOrEqual(card.y + card.height)
     expect(await horizontalOverflow(page)).toBe(0)
   })
+
+  test('imprimir a partir do celular dá ao canvas a largura do cartão no desktop', async ({ page }) => {
+    await openChart(page)
+    const width = () => canvas(page).evaluate((node) => node.getBoundingClientRect().width)
+    const onScreen = await width()
+    expect(onScreen).toBeLessThan(400)
+    // page.pdf não dispara os eventos de impressão; o diálogo do navegador dispara
+    await page.evaluate(() => dispatchEvent(new Event('beforeprint')))
+    expect(await width()).toBe(1176)
+    await page.evaluate(() => dispatchEvent(new Event('afterprint')))
+    expect(await width()).toBe(onScreen)
+  })
 })

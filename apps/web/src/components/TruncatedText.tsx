@@ -4,7 +4,8 @@ import { Hint } from './Hint'
 
 /**
  * Texto que trunca no fim e mostra o texto completo numa dica só quando há corte de verdade
- * (seção 2.7). Com `wrapOnMobile`, quebra em até 2 linhas abaixo de md e trunca a partir dele.
+ * (seção 2.7). Com `wrapOnMobile`, abaixo de md o texto quebra inteiro, sem limite de linhas: a
+ * dica não abre com toque, e um corte esconderia o fim justamente ali. A partir de md, trunca.
  */
 export function TruncatedText({
   text,
@@ -38,11 +39,7 @@ export function TruncatedText({
     <Hint content={text} disabled={!cut}>
       <span
         ref={ref}
-        className={clsx(
-          'block min-w-0',
-          wrapOnMobile ? 'line-clamp-2 break-words md:line-clamp-none md:truncate' : 'truncate',
-          className,
-        )}
+        className={clsx('block min-w-0', wrapOnMobile ? 'break-words md:truncate' : 'truncate', className)}
       >
         {children ?? text}
       </span>

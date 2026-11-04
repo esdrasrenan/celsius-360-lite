@@ -1,21 +1,12 @@
-import { Alert02Icon, ArrowDown01Icon, ArrowUp01Icon } from '@hugeicons/core-free-icons'
+import { Alert02Icon } from '@hugeicons/core-free-icons'
 import { clsx } from 'clsx'
 import type { ReactNode } from 'react'
-import { formatDecimal, MISSING, NBSP } from '../lib/format'
+import { MISSING } from '../lib/format'
 import type { Definition as DefinitionText } from '../lib/states'
 import { Definition } from './Definition'
 import { Icon } from './Icon'
 import { Skeleton } from './Skeleton'
 import { TruncatedText } from './TruncatedText'
-
-export interface KpiChange {
-  /** Variação em pontos percentuais (positivo = subiu). */
-  value: number
-  /** Base de comparação, para o nome acessível ("vs 7 dias anteriores"). */
-  comparison: string
-  /** Métricas em que subir é ruim (fora da meta, indisponibilidade) passam false. */
-  higherIsBetter?: boolean
-}
 
 export interface KpiFilter {
   pressed: boolean
@@ -34,11 +25,10 @@ export interface KpiProps {
   unit?: string
   /** Valor textual ("Nenhuma", "Todas as lojas fechadas"), no lugar do número. */
   text?: string
-  /** Uma linha de contexto; o texto completo vai na dica quando há corte. */
+  /** Contexto: quebra no celular (a dica não abre com toque) e trunca com dica a partir de md. */
   context?: string
   /** Contagem de problema maior que zero: ícone de alerta antes do valor e contexto em alerta. */
   alert?: boolean
-  change?: KpiChange | null
   /** Assinatura da marca: só o KPI herói ("Conforto da rede"). */
   brand?: boolean
   /** Variante filtro: o cartão inteiro vira um botão com aria-pressed. */
@@ -49,26 +39,6 @@ export interface KpiProps {
   /** Visual opcional na base (barra de distribuição). */
   children?: ReactNode
   className?: string
-}
-
-/** Chip de variação: melhora em ok, piora em falha, |Δ| < 0,5 p.p. neutro. */
-function ChangeChip({ change }: { change: KpiChange }) {
-  const up = change.value > 0
-  const neutral = Math.abs(change.value) < 0.5
-  const good = up === (change.higherIsBetter ?? true)
-  const amount = `${formatDecimal(Math.abs(change.value))}${NBSP}p.p.`
-  return (
-    <span
-      className={clsx(
-        'num inline-flex h-5 shrink-0 items-center gap-0.5 rounded-sm px-1.5 font-medium text-legenda',
-        neutral ? 'text-texto-3' : good ? 'bg-ok-fundo text-ok-texto' : 'bg-falha-fundo text-falha-texto',
-      )}
-    >
-      {change.value !== 0 && <Icon icon={up ? ArrowUp01Icon : ArrowDown01Icon} size={12} />}
-      <span aria-hidden="true">{amount}</span>
-      <span className="so-leitor">{`${up ? 'subiu' : 'caiu'} ${amount} ${change.comparison}`}</span>
-    </span>
-  )
 }
 
 /**
@@ -83,7 +53,6 @@ export function Kpi({
   text,
   context,
   alert = false,
-  change,
   brand = false,
   filter,
   loading = false,
@@ -126,18 +95,14 @@ export function Kpi({
           className="absolute inset-0 rounded-xl transition-shadow duration-100 ease-linear hover:shadow-cartao-hover aria-pressed:bg-selecionado aria-pressed:ring-2 aria-pressed:ring-acento aria-pressed:ring-inset"
         />
       )}
-      {/* Sem espaço para rótulo e chip na mesma linha (2 × 2 no celular), o chip desce: o nome nunca é cortado */}
-      <div className="pointer-events-none relative flex flex-wrap items-start gap-x-2 gap-y-1">
-        <h3 className="min-w-0 flex-auto font-medium text-apoio text-texto-3">
-          {label}
-          {definition && (
-            <span className="pointer-events-auto -my-1 ms-1 inline-flex align-middle">
-              <Definition term={definition.term} lines={definition.lines} />
-            </span>
-          )}
-        </h3>
-        {change && !error && <ChangeChip change={change} />}
-      </div>
+      <h3 className="pointer-events-none relative min-w-0 font-medium text-apoio text-texto-3">
+        {label}
+        {definition && (
+          <span className="pointer-events-auto -my-1 ms-1 inline-flex align-middle">
+            <Definition term={definition.term} lines={definition.lines} />
+          </span>
+        )}
+      </h3>
       <p className="pointer-events-none relative flex items-center gap-1.5">
         {showAlert && <Icon icon={Alert02Icon} className="text-alerta" />}
         {text && !error ? (
@@ -161,7 +126,7 @@ export function Kpi({
             showAlert ? 'text-alerta-texto' : 'text-texto-3',
           )}
         >
-          <TruncatedText text={shownContext} />
+          <TruncatedText text={shownContext} wrapOnMobile />
         </div>
       )}
       {children && !error && <div className="pointer-events-none relative mt-auto">{children}</div>}

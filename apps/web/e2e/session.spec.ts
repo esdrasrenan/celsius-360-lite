@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
-import { signIn, USERS } from './support'
+import { sessionFile, signIn, USERS } from './support'
 
 /**
  * Sessão e perfis (P0 #4, #5 e #9 e critérios 8.7 e 8.9) contra a stack de E2E (test/fixtures/e2e):
@@ -114,4 +114,73 @@ test('qualidade dos dados só para o administrador da Diel', async ({ page }) =>
   ).toBeVisible()
   await expect(page.getByRole('link', { name: 'Ir para a visão da rede' })).toBeVisible()
   await expect(page.getByText('Anomalias encontradas')).toHaveCount(0)
+})
+
+/** Código do detalhe: o chunk do build ("EnvironmentPage-hash.js") ou o módulo do dev server. */
+const ENVIRONMENT_CHUNK = /\/EnvironmentPage[^/]*\.(?:js|tsx)(?:\?|$)/
+
+test.describe('casca', () => {
+  test.use({ storageState: sessionFile('admin') })
+
+  test('chip ao vivo: "Ao vivo" com a ingestão rodando', async ({ page }) => {
+    // SSE falso que fica aberto e manda o snapshot de uma ingestão em andamento
+    await page.addInitScript(() => {
+      class LiveSource extends EventTarget {
+        onerror = null
+        constructor() {
+          super()
+          const data = JSON.stringify({ now: '2026-02-11T02:59:56Z', lastSeq: 1, ingesting: true })
+          setTimeout(() => this.dispatchEvent(new MessageEvent('snapshot', { data })), 0)
+        }
+        close() {}
+      }
+      window.EventSource = LiveSource as unknown as typeof EventSource
+    })
+    await page.goto('/')
+    await expect(page.getByRole('button', { name: 'Ao vivo · 10/02 23:59' })).toBeVisible()
+  })
+
+  test('SSE recusado: o chip conta a espera de cada nova tentativa, a primeira de 1 s', async ({ page }) => {
+    await page.route('**/api/v1/events', (route) => route.fulfill({ status: 503 }))
+    await page.goto('/')
+    await expect(page.getByRole('button', { name: 'Reconectando em 1 s' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Reconectando em 2 s' })).toBeVisible()
+  })
+
+  test('tela sob demanda: a casca aparece e avisa a espera enquanto o código desce', async ({ page }) => {
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await page.route(ENVIRONMENT_CHUNK, async (route) => {
+      await gate
+      await route.continue()
+    })
+
+    // Acesso direto: cabeçalho e navegação já na tela, só o conteúdo espera
+    await page.goto('/ambientes/AMB-T1?periodo=7d')
+    await expect(page.getByRole('navigation', { name: 'Navegação principal' })).toBeVisible()
+    await expect(page.locator('#conteudo [aria-busy="true"]')).toBeVisible()
+    release()
+    await expect(page.getByRole('heading', { level: 1, name: 'Salão' })).toBeVisible()
+  })
+
+  test('clique numa tela sob demanda mostra a barra de carga no cabeçalho', async ({ page }) => {
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await page.route(ENVIRONMENT_CHUNK, async (route) => {
+      await gate
+      await route.continue()
+    })
+
+    await page.goto('/?ordem=name&periodo=1d')
+    await page.getByRole('link', { name: /Salão/ }).first().click()
+    await expect(page.getByRole('progressbar', { name: 'Carregando a página' })).toBeVisible()
+    await expect(page.locator('main')).toHaveAttribute('aria-busy', 'true')
+    release()
+    await expect(page.getByRole('heading', { level: 1, name: 'Salão' })).toBeVisible()
+    await expect(page.locator('main')).not.toHaveAttribute('aria-busy', 'true')
+  })
 })

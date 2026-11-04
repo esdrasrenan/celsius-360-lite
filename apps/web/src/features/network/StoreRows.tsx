@@ -23,6 +23,7 @@ import {
 } from '../../lib/format'
 import {
   COMFORT_TARGET_PCT,
+  COVERAGE_MIN_PCT,
   comfortTone,
   DEVICE_STATE,
   SITUATION_STATE,
@@ -38,6 +39,8 @@ import { environmentMatches } from './params'
  * Linhas da tabela de lojas (seção 3.11): um <tbody> por loja, com a linha da loja e, abaixo, as dos
  * ambientes. A partir de md as células seguem as colunas do <colgroup>; abaixo de md cada linha
  * vira um bloco com uma célula própria do celular, e nada que comunica situação fica escondido.
+ * Só o layout da largura atual é montado, e os ambientes só com a loja aberta: com 100 lojas por
+ * página, montar os dois layouts e as linhas recolhidas triplicava os nós e travava cada atualização.
  */
 
 export const CELL_SHOW = {
@@ -48,7 +51,7 @@ export const CELL_SHOW = {
 
 const STORE_CELL = 'h-linha-loja border-borda-forte border-t px-3 py-2 align-middle'
 const ENV_CELL = 'h-linha-ambiente border-borda border-t px-3 py-1.5 align-middle'
-const MOBILE_CELL = 'block border-t md:hidden'
+const MOBILE_CELL = 'block border-t'
 
 /** Dicas dentro da linha do ambiente ficam acima do link esticado, para o hover alcançá-las. */
 const ABOVE_LINK = 'relative z-1'
@@ -178,7 +181,7 @@ function Coverage({ pct }: { pct: number | null }) {
     <span
       className={clsx(
         'num text-apoio',
-        pct != null && pct < COMFORT_TARGET_PCT ? 'text-alerta-texto' : 'text-texto-3',
+        pct != null && pct < COVERAGE_MIN_PCT ? 'text-alerta-texto' : 'text-texto-3',
       )}
     >
       {formatPercent(pct)}
@@ -360,7 +363,8 @@ function ToggleButton({
 }: {
   store: StoreListItem
   open: boolean
-  controls: string
+  /** Ids das linhas dos ambientes; ausente com a loja recolhida, quando elas não existem. */
+  controls: string | undefined
   className?: string
 }) {
   // Sem onClick próprio: o clique sobe para a linha, que alterna (o teclado também gera clique)
@@ -395,6 +399,7 @@ export function StoreRows({
   now,
   period,
   from,
+  desktop,
 }: {
   store: StoreListItem
   open: boolean
@@ -406,10 +411,12 @@ export function StoreRows({
   period: string
   /** Query da lista, levada no state do link para o breadcrumb do detalhe voltar com os filtros. */
   from: string
+  /** A partir de md: células das colunas; abaixo, a célula única do celular. */
+  desktop: boolean
 }) {
   const navigate = useNavigate()
   const rowId = (environment: EnvironmentListItem) => `ambiente-${environment.id}`
-  const controls = store.environments.map(rowId).join(' ')
+  const controls = open ? store.environments.map(rowId).join(' ') : undefined
   const exceptions = storeExceptions(store)
   const storeState = STORE_STATE[store.status]
   const worst = store.worstEnvironment
@@ -429,201 +436,213 @@ export function StoreRows({
   return (
     <tbody className="block md:table-row-group">
       <tr onClick={onToggle} className="block cursor-pointer bg-superficie-2 md:table-row">
-        <td className={clsx(CELL_SHOW.md, STORE_CELL, 'ps-1.5 pe-0 text-center')}>
-          <ToggleButton store={store} open={open} controls={controls} />
-        </td>
-        <td className={clsx(CELL_SHOW.md, STORE_CELL)}>
-          {/* Na linha do nome, só o nome e um badge: o nome da loja é o que não pode ser cortado */}
-          <div className="flex min-w-0 items-center gap-2">
-            <TruncatedText text={store.name} className="font-semibold text-corpo text-texto">
-              <Highlight text={store.name} query={search} />
-            </TruncatedText>
-            <ExceptionBadges items={exceptions} />
-            <span className="lg:hidden">{statusBadge}</span>
-          </div>
-          {/*
-           * "Pior" segue o metadado na mesma linha e desce inteiro para a seguinte quando não cabe.
-           * Cada item reserva 12 px à esquerda para o separador, e o recuo negativo com o corte do
-           * contêiner esconde o separador de quem começa a linha.
-           */}
-          <div className="overflow-hidden">
-            <div className="-ms-3 flex flex-wrap items-baseline text-legenda">
-              <TruncatedText text={meta} className="max-w-full ps-3 text-texto-3">
-                <Highlight text={meta} query={search} />
-              </TruncatedText>
-              {worst && showWorst && <WorstEnvironment name={worst.name} pct={worst.comfortPct} separator />}
-            </div>
-          </div>
-        </td>
-        <td className={clsx(CELL_SHOW.lg, STORE_CELL)}>
-          <StoreTelemetry store={store} />
-        </td>
-        <td className={clsx(CELL_SHOW.md, STORE_CELL, 'text-end')}>
-          <span className="inline-flex justify-end">
-            <StoreNow store={store} now={now} />
-          </span>
-        </td>
-        <td className={clsx(CELL_SHOW.xl, STORE_CELL)} />
-        <td className={clsx(CELL_SHOW.md, STORE_CELL)}>
-          <ComfortBar
-            within={store.comfortPct}
-            below={store.belowPct}
-            above={store.abovePct}
-            coverage={store.coveragePct}
-          />
-        </td>
-        <td className={clsx(CELL_SHOW.xl, STORE_CELL, 'text-end')}>
-          <Coverage pct={store.coveragePct} />
-        </td>
-        <td className={clsx(CELL_SHOW.md, STORE_CELL)} />
-
-        <td className={clsx(MOBILE_CELL, 'border-borda-forte py-3 ps-2 pe-4')}>
-          <div className="flex items-start gap-1">
-            <ToggleButton store={store} open={open} controls={controls} />
-            <div className="flex min-w-0 flex-1 flex-col gap-1.5 pt-1">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                  {name}
-                  <ExceptionBadges items={exceptions} />
+        {desktop ? (
+          <>
+            <td className={clsx(CELL_SHOW.md, STORE_CELL, 'ps-1.5 pe-0 text-center')}>
+              <ToggleButton store={store} open={open} controls={controls} />
+            </td>
+            <td className={clsx(CELL_SHOW.md, STORE_CELL)}>
+              {/* Na linha do nome, só o nome e um badge: o nome da loja é o que não pode ser cortado */}
+              <div className="flex min-w-0 items-center gap-2">
+                <TruncatedText text={store.name} className="font-semibold text-corpo text-texto">
+                  <Highlight text={store.name} query={search} />
+                </TruncatedText>
+                <ExceptionBadges items={exceptions} />
+                <span className="lg:hidden">{statusBadge}</span>
+              </div>
+              {/*
+               * "Pior" segue o metadado na mesma linha e desce inteiro para a seguinte quando não cabe.
+               * Cada item reserva 12 px à esquerda para o separador, e o recuo negativo com o corte do
+               * contêiner esconde o separador de quem começa a linha.
+               */}
+              <div className="overflow-hidden">
+                <div className="-ms-3 flex flex-wrap items-baseline text-legenda">
+                  <TruncatedText text={meta} className="max-w-full ps-3 text-texto-3">
+                    <Highlight text={meta} query={search} />
+                  </TruncatedText>
+                  {worst && showWorst && (
+                    <WorstEnvironment name={worst.name} pct={worst.comfortPct} separator />
+                  )}
                 </div>
-                <ComfortValue pct={store.comfortPct} />
               </div>
-              {worst && showWorst && (
-                <p className="flex text-legenda">
-                  <WorstEnvironment name={worst.name} pct={worst.comfortPct} />
-                </p>
-              )}
-              <p className="text-legenda text-texto-3">
-                <Highlight text={meta} query={search} />
-              </p>
-              <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
-                <StoreNow store={store} now={now} layout="inline" />
-                <Separator />
-                {statusBadge}
-                <StoreTelemetry store={store} showLabel />
-              </div>
+            </td>
+            <td className={clsx(CELL_SHOW.lg, STORE_CELL)}>
+              <StoreTelemetry store={store} />
+            </td>
+            <td className={clsx(CELL_SHOW.md, STORE_CELL, 'text-end')}>
+              <span className="inline-flex justify-end">
+                <StoreNow store={store} now={now} />
+              </span>
+            </td>
+            <td className={clsx(CELL_SHOW.xl, STORE_CELL)} />
+            <td className={clsx(CELL_SHOW.md, STORE_CELL)}>
               <ComfortBar
-                size="kpi"
                 within={store.comfortPct}
                 below={store.belowPct}
                 above={store.abovePct}
                 coverage={store.coveragePct}
-                className="mt-1"
               />
-            </div>
-          </div>
-        </td>
-      </tr>
-
-      {store.environments.map((environment) => {
-        const href = `/ambientes/${encodeURIComponent(environment.id)}?periodo=${period}`
-        const found = flash && environmentMatches(environment, search)
-        const follow = (event: MouseEvent<HTMLTableRowElement>) => {
-          // O link esticado cobre a linha; aqui chegam só os cliques nas dicas, que ficam acima dele
-          if ((event.target as HTMLElement).closest('a')) return
-          navigate(href, { state: { from } })
-        }
-        const link = (children: ReactNode, className?: string) => (
-          <Link
-            to={href}
-            state={{ from }}
-            className={clsx(
-              'min-w-0 font-medium text-corpo text-texto-2 after:absolute after:inset-0 focus-visible:outline-none',
-              className,
-            )}
-          >
-            {children}
-          </Link>
-        )
-        return (
-          <tr
-            key={environment.id}
-            id={rowId(environment)}
-            hidden={!open}
-            data-destacado={found || undefined}
-            onClick={follow}
-            className="group relative block cursor-pointer bg-superficie transition-colors duration-100 ease-linear hover:bg-realce has-focus-visible:outline-2 has-focus-visible:outline-foco has-focus-visible:-outline-offset-2 data-destacado:bg-selecionado md:table-row"
-          >
-            <td className={clsx(CELL_SHOW.md, ENV_CELL)} />
-            <td className={clsx(CELL_SHOW.md, ENV_CELL, 'ps-8')}>
-              <div className="flex min-w-0 items-center gap-3">
-                {link(
-                  <TruncatedText text={environment.name} className={ABOVE_LINK}>
-                    <Highlight text={environment.name} query={search} />
-                  </TruncatedText>,
-                  'flex',
+            </td>
+            <td className={clsx(CELL_SHOW.xl, STORE_CELL, 'text-end')}>
+              <Coverage pct={store.coveragePct} />
+            </td>
+            <td className={clsx(CELL_SHOW.md, STORE_CELL)} />
+          </>
+        ) : (
+          <td className={clsx(MOBILE_CELL, 'border-borda-forte py-3 ps-2 pe-4')}>
+            <div className="flex items-start gap-1">
+              <ToggleButton store={store} open={open} controls={controls} />
+              <div className="flex min-w-0 flex-1 flex-col gap-1.5 pt-1">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                    {name}
+                    <ExceptionBadges items={exceptions} />
+                  </div>
+                  <ComfortValue pct={store.comfortPct} />
+                </div>
+                {worst && showWorst && (
+                  <p className="flex text-legenda">
+                    <WorstEnvironment name={worst.name} pct={worst.comfortPct} />
+                  </p>
                 )}
-                {environment.deviceId && (
-                  <span className="id-tecnico hidden shrink-0 xl:inline">
-                    <Highlight text={environment.deviceId} query={search} />
-                  </span>
-                )}
-                {environment.status !== 'online' && (
-                  <span className="lg:hidden">
-                    <DeviceTelemetry environment={environment} now={now} />
-                  </span>
-                )}
-              </div>
-            </td>
-            <td className={clsx(CELL_SHOW.lg, ENV_CELL)}>
-              <DeviceTelemetry environment={environment} now={now} />
-            </td>
-            <td className={clsx(CELL_SHOW.md, ENV_CELL, 'text-end')}>
-              <span className="inline-flex flex-col items-end gap-0.5">
-                <Temperature environment={environment} now={now} timezone={store.timezone} />
-                <span className="num whitespace-nowrap text-legenda text-texto-3 xl:hidden">
-                  {formatRange(environment.comfortRange)}
-                </span>
-              </span>
-            </td>
-            <td className={clsx(CELL_SHOW.xl, ENV_CELL, 'text-end')}>
-              <span className="num whitespace-nowrap text-apoio text-texto-3">
-                {formatRange(environment.comfortRange)}
-              </span>
-            </td>
-            <td className={clsx(CELL_SHOW.md, ENV_CELL)}>
-              <div className={clsx(ABOVE_LINK, 'ms-auto w-fit')}>
+                <p className="text-legenda text-texto-3">
+                  <Highlight text={meta} query={search} />
+                </p>
+                <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                  <StoreNow store={store} now={now} layout="inline" />
+                  <Separator />
+                  {statusBadge}
+                  <StoreTelemetry store={store} showLabel />
+                </div>
                 <ComfortBar
-                  within={environment.comfortPct}
-                  below={environment.belowPct}
-                  above={environment.abovePct}
-                  coverage={environment.coveragePct}
+                  size="kpi"
+                  within={store.comfortPct}
+                  below={store.belowPct}
+                  above={store.abovePct}
+                  coverage={store.coveragePct}
+                  className="mt-1"
                 />
               </div>
-            </td>
-            <td className={clsx(CELL_SHOW.xl, ENV_CELL, 'text-end')}>
-              <Coverage pct={environment.coveragePct} />
-            </td>
-            <td className={clsx(CELL_SHOW.md, ENV_CELL, 'ps-0 pe-3 text-center')}>
-              <Icon
-                icon={ArrowRight01Icon}
-                className="inline text-texto-3 transition-colors duration-100 ease-linear group-hover:text-texto"
-              />
-            </td>
+            </div>
+          </td>
+        )}
+      </tr>
 
-            <td className={clsx(MOBILE_CELL, 'border-borda py-2.5 ps-11 pe-4')}>
-              <div className="flex items-start justify-between gap-3">
-                {link(<Highlight text={environment.name} query={search} />, 'line-clamp-2 break-words')}
-                <Temperature environment={environment} now={now} timezone={store.timezone} />
-              </div>
-              <div className="mt-1.5 flex items-center gap-2">
-                <SituationBadge situation={environment.situation} />
-                {environment.status !== 'online' && <DeviceTelemetry environment={environment} now={now} />}
-                <div className="min-w-0 flex-1">
-                  <ComfortBar
-                    size="kpi"
-                    within={environment.comfortPct}
-                    below={environment.belowPct}
-                    above={environment.abovePct}
-                    coverage={environment.coveragePct}
-                  />
-                </div>
-                <ComfortValue pct={environment.comfortPct} />
-              </div>
-            </td>
-          </tr>
-        )
-      })}
+      {open &&
+        store.environments.map((environment) => {
+          const href = `/ambientes/${encodeURIComponent(environment.id)}?periodo=${period}`
+          const found = flash && environmentMatches(environment, search)
+          const follow = (event: MouseEvent<HTMLTableRowElement>) => {
+            // O link esticado cobre a linha; aqui chegam só os cliques nas dicas, que ficam acima dele
+            if ((event.target as HTMLElement).closest('a')) return
+            navigate(href, { state: { from } })
+          }
+          const link = (children: ReactNode, className?: string) => (
+            <Link
+              to={href}
+              state={{ from }}
+              className={clsx(
+                'min-w-0 font-medium text-corpo text-texto-2 after:absolute after:inset-0 focus-visible:outline-none',
+                className,
+              )}
+            >
+              {children}
+            </Link>
+          )
+          return (
+            <tr
+              key={environment.id}
+              id={rowId(environment)}
+              data-destacado={found || undefined}
+              onClick={follow}
+              className="group relative block cursor-pointer bg-superficie transition-colors duration-100 ease-linear hover:bg-realce has-focus-visible:outline-2 has-focus-visible:outline-foco has-focus-visible:-outline-offset-2 data-destacado:bg-selecionado md:table-row"
+            >
+              {desktop ? (
+                <>
+                  <td className={clsx(CELL_SHOW.md, ENV_CELL)} />
+                  <td className={clsx(CELL_SHOW.md, ENV_CELL, 'ps-8')}>
+                    <div className="flex min-w-0 items-center gap-3">
+                      {link(
+                        <TruncatedText text={environment.name} className={ABOVE_LINK}>
+                          <Highlight text={environment.name} query={search} />
+                        </TruncatedText>,
+                        'flex',
+                      )}
+                      {environment.deviceId && (
+                        <span className="id-tecnico hidden shrink-0 xl:inline">
+                          <Highlight text={environment.deviceId} query={search} />
+                        </span>
+                      )}
+                      {environment.status !== 'online' && (
+                        <span className="lg:hidden">
+                          <DeviceTelemetry environment={environment} now={now} />
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className={clsx(CELL_SHOW.lg, ENV_CELL)}>
+                    <DeviceTelemetry environment={environment} now={now} />
+                  </td>
+                  <td className={clsx(CELL_SHOW.md, ENV_CELL, 'text-end')}>
+                    <span className="inline-flex flex-col items-end gap-0.5">
+                      <Temperature environment={environment} now={now} timezone={store.timezone} />
+                      <span className="num whitespace-nowrap text-legenda text-texto-3 xl:hidden">
+                        {formatRange(environment.comfortRange)}
+                      </span>
+                    </span>
+                  </td>
+                  <td className={clsx(CELL_SHOW.xl, ENV_CELL, 'text-end')}>
+                    <span className="num whitespace-nowrap text-apoio text-texto-3">
+                      {formatRange(environment.comfortRange)}
+                    </span>
+                  </td>
+                  <td className={clsx(CELL_SHOW.md, ENV_CELL)}>
+                    <div className={clsx(ABOVE_LINK, 'ms-auto w-fit')}>
+                      <ComfortBar
+                        within={environment.comfortPct}
+                        below={environment.belowPct}
+                        above={environment.abovePct}
+                        coverage={environment.coveragePct}
+                      />
+                    </div>
+                  </td>
+                  <td className={clsx(CELL_SHOW.xl, ENV_CELL, 'text-end')}>
+                    <Coverage pct={environment.coveragePct} />
+                  </td>
+                  <td className={clsx(CELL_SHOW.md, ENV_CELL, 'ps-0 pe-3 text-center')}>
+                    <Icon
+                      icon={ArrowRight01Icon}
+                      className="inline text-texto-3 transition-colors duration-100 ease-linear group-hover:text-texto"
+                    />
+                  </td>
+                </>
+              ) : (
+                <td className={clsx(MOBILE_CELL, 'border-borda py-2.5 ps-11 pe-4')}>
+                  <div className="flex items-start justify-between gap-3">
+                    {link(<Highlight text={environment.name} query={search} />, 'line-clamp-2 break-words')}
+                    <Temperature environment={environment} now={now} timezone={store.timezone} />
+                  </div>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <SituationBadge situation={environment.situation} />
+                    {environment.status !== 'online' && (
+                      <DeviceTelemetry environment={environment} now={now} />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <ComfortBar
+                        size="kpi"
+                        within={environment.comfortPct}
+                        below={environment.belowPct}
+                        above={environment.abovePct}
+                        coverage={environment.coveragePct}
+                      />
+                    </div>
+                    <ComfortValue pct={environment.comfortPct} />
+                  </div>
+                </td>
+              )}
+            </tr>
+          )
+        })}
     </tbody>
   )
 }

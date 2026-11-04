@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import type { StoreList } from '@celsius/contracts'
 import { expect, type Page, test } from '@playwright/test'
 import { sessionFile } from './support'
 
@@ -81,13 +82,16 @@ test.describe('visão da rede', () => {
     await page.getByRole('button', { name: 'Limpar filtros' }).click()
     await expect(page).toHaveURL(/\/\?periodo=7d$/)
     await expect(kpis(page).getByRole('heading', { level: 2 })).toHaveText('Indicadores da rede')
+
+    // A pílula conta lojas e o KPI de mesmo tema conta ambientes: o rótulo diz a unidade
+    await page.getByRole('button', { name: /^Lojas fora da meta/ }).click()
+    await expect(page).toHaveURL(/abaixoDaMeta=1/)
   })
 
-  test('exportar baixa o CSV da lista filtrada, uma linha por ambiente', async ({ page }) => {
-    await page.getByRole('button', { name: 'Exportar', exact: true }).click()
+  test('"Baixar CSV" baixa a lista filtrada, uma linha por ambiente', async ({ page }) => {
     const [download] = await Promise.all([
       page.waitForEvent('download'),
-      page.getByRole('menuitem', { name: /Baixar CSV/ }).click(),
+      page.getByRole('button', { name: 'Baixar CSV', exact: true }).click(),
     ])
     expect(download.suggestedFilename()).toMatch(/^celsius360-lojas-1d-\d{4}-\d{2}-\d{2}\.csv$/)
     const csv = await readFile(await download.path(), 'utf8')
@@ -303,6 +307,23 @@ test.describe('estados (8.7)', () => {
     expect(after).toEqual(before)
   })
 
+  test('estado vazio em 1024: o cabeçalho vai até a borda da tabela', async ({ page }) => {
+    // Em 1024 as colunas de xl estão ocultas; a mensagem com colSpan a mais encolhia o cabeçalho
+    await page.setViewportSize({ width: 1024, height: 800 })
+    await page.goto('/?busca=%25')
+    await expect(page.getByRole('heading', { name: 'Nenhuma loja para "%"' })).toBeVisible()
+    const gap = await table(page)
+      .locator('table')
+      .evaluate((element) => {
+        const cells = [...element.querySelectorAll('thead tr > *')].filter(
+          (cell) => getComputedStyle(cell).display !== 'none',
+        )
+        const right = Math.max(...cells.map((cell) => cell.getBoundingClientRect().right))
+        return Math.round(element.getBoundingClientRect().right - right)
+      })
+    expect(gap).toBe(0)
+  })
+
   test('?pagina=999 vira a última página, sem entrada nova no histórico', async ({ page }) => {
     await page.goto('/?periodo=7d')
     const entries = await page.evaluate(() => history.length)
@@ -337,6 +358,81 @@ test.describe('perfil gerente (8.9)', () => {
       'aria-expanded',
       'true',
     )
+  })
+
+  test('?cliente= de fora do acesso sai com aviso; o do próprio acesso mostra o nome', async ({ page }) => {
+    await page.goto('/?cliente=CLI-T1')
+    await expect(page.getByText(/^O cliente do link não existe ou não está no seu acesso/)).toBeVisible()
+    await expect(page).not.toHaveURL(/cliente=/)
+    await expect.poll(() => storeNames(page)).toEqual(['Agência Recife'])
+
+    await page.goto('/?cliente=CLI-T2')
+    await expect(page.getByRole('button', { name: 'Remover filtro Cliente: Outro Cliente' })).toBeVisible()
+  })
+})
+
+test.describe('gaveta de filtros do celular', () => {
+  test.use({ viewport: { width: 375, height: 812 } })
+
+  test('"Aplicar" volta à página 1 e à abertura padrão, como a pílula do desktop', async ({ page }) => {
+    await page.goto('/?abertas=LOJA-T-SP')
+    await page.getByRole('button', { name: /^Filtros/ }).click()
+    const sheet = page.getByRole('dialog', { name: 'Filtros' })
+    await sheet.getByRole('radiogroup', { name: 'Telemetria da loja' }).getByText('Online').click()
+    await sheet.getByRole('button', { name: 'Aplicar' }).click()
+    await expect(page).toHaveURL(/\/\?status=online$/)
+  })
+})
+
+test.describe('volume (100 lojas por página)', () => {
+  /** As lojas da fixture clonadas até 100, como a página mais longa que a interface oferece. */
+  test.beforeEach(async ({ page }) => {
+    await page.route(STORES_API, async (route) => {
+      const response = await route.fetch()
+      const list = (await response.json()) as StoreList
+      const items = Array.from({ length: 100 / list.items.length }, (_, n) =>
+        list.items.map((store) => ({
+          ...store,
+          id: `${store.id}-${n}`,
+          name: `${store.name} ${n}`,
+          environments: store.environments.map((environment) => ({
+            ...environment,
+            id: `${environment.id}-${n}`,
+          })),
+        })),
+      ).flat()
+      await route.fulfill({ response, json: { ...list, items, total: items.length, pageSize: 100 } })
+    })
+  })
+
+  test('só o layout da largura atual e só os ambientes das lojas abertas vão para o DOM', async ({
+    page,
+  }) => {
+    await page.goto('/?porPagina=100&abertas=')
+    const toggles = page.getByRole('button', { name: /^Ambientes de / })
+    await expect(toggles).toHaveCount(100)
+    const dom = () =>
+      page.evaluate(() => ({
+        nodes: document.querySelectorAll('*').length,
+        environmentRows: document.querySelectorAll('tr[id^="ambiente-"]').length,
+        hiddenCells: [...document.querySelectorAll('td')].filter(
+          (cell) => getComputedStyle(cell).display === 'none',
+        ).length,
+        danglingControls: [...document.querySelectorAll('button[aria-label^="Ambientes de "][aria-controls]')]
+          .flatMap((button) => button.getAttribute('aria-controls')?.split(' ') ?? [])
+          .filter((id) => !document.getElementById(id)).length,
+      }))
+
+    // Recolhidas, as linhas dos ambientes não existem (antes ficavam no DOM com hidden)
+    expect(await dom()).toMatchObject({ environmentRows: 0, hiddenCells: 0, danglingControls: 0 })
+    await expect(toggles.first()).not.toHaveAttribute('aria-controls')
+
+    await page.getByRole('button', { name: 'Expandir todas' }).click()
+    await expect(page.locator('tr[id^="ambiente-"]')).toHaveCount(150)
+    const expanded = await dom()
+    expect(expanded).toMatchObject({ hiddenCells: 0, danglingControls: 0 })
+    // Com tudo aberto dá uns 11.500 nós; com o layout do celular montado junto, uns 18.000
+    expect(expanded.nodes).toBeLessThan(15_000)
   })
 })
 

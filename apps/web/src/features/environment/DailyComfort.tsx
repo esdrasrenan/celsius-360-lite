@@ -62,7 +62,10 @@ export function DailyComfort({ days }: { days: Day[] }) {
         <div aria-hidden="true" className="relative h-40 w-9 shrink-0 text-end text-legenda text-texto-3">
           <span className="absolute end-0 bottom-0 translate-y-1/2">0%</span>
           <span className="absolute end-0 bottom-1/2 translate-y-1/2">50%</span>
-          <span className="absolute end-0 bottom-9/10 translate-y-1/2 font-medium text-texto-2">
+          <span
+            className="absolute end-0 translate-y-1/2 font-medium text-texto-2"
+            style={{ bottom: `${COMFORT_TARGET_PCT}%` }}
+          >
             {COMFORT_TARGET_PCT}%
           </span>
         </div>
@@ -158,10 +161,13 @@ export function DailyComfort({ days }: { days: Day[] }) {
               </tr>
             </tbody>
           </table>
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 top-4 border-texto-2 border-t border-dashed"
-          />
+          {/* A meta por cima das colunas, na mesma escala de h-40 do eixo (a tabela é mais alta) */}
+          <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-40">
+            <span
+              className="absolute inset-x-0 border-texto-2 border-t border-dashed"
+              style={{ bottom: `${COMFORT_TARGET_PCT}%` }}
+            />
+          </div>
         </div>
       </div>
       <CellHintRoot handle={hint} />

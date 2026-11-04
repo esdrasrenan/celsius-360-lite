@@ -114,7 +114,9 @@ export function GapsList({
         </p>
       ) : (
         <>
-          <table className="hidden w-full table-fixed md:table">
+          {/* Tabela só a partir de lg: abaixo, as colunas fixas somam quase o cartão e o motivo
+              encavala no "Ver no gráfico". Na impressão a página tem largura de desktop */}
+          <table className="hidden w-full table-fixed lg:table print:table">
             <colgroup>
               <col className="w-40" />
               <col className="w-40" />
@@ -181,11 +183,11 @@ export function GapsList({
             </tbody>
           </table>
 
-          <ul className="flex flex-col border-borda border-t md:hidden">
+          <ul className="flex flex-col border-borda border-t lg:hidden print:hidden">
             {rows.map((row) => (
               <li
                 key={row.gap.from}
-                className="flex flex-col gap-1.5 border-borda border-t px-4 py-3 first:border-t-0"
+                className="flex flex-col gap-1.5 border-borda border-t px-4 py-3 first:border-t-0 md:px-5"
               >
                 <div className="flex items-center justify-between gap-3">
                   <GapBadge gap={row.gap} />

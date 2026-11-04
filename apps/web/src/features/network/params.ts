@@ -10,7 +10,6 @@ import { foldText, searchTerms } from '../../lib/text'
  * for inválido; a tela então reescreve a URL normalizada com replace.
  */
 
-export const PERIODS = ['1d', '7d', '30d'] as const satisfies readonly PeriodKey[]
 export const PAGE_SIZES = [20, 50, 100] as const
 export const SEARCH_MAX = 80
 
@@ -70,7 +69,7 @@ const positiveInt = (value: string | null): number | null =>
 
 const id = (value: string | null): string | null => {
   const trimmed = value?.trim() ?? ''
-  return trimmed && trimmed.length <= 64 ? trimmed : null
+  return trimmed && trimmed.length <= 64 && !/\p{Cc}/u.test(trimmed) ? trimmed : null
 }
 
 export function parseView(params: URLSearchParams): NetworkView {
@@ -136,6 +135,21 @@ export const CLEARED_FILTERS = {
   belowTarget: false,
   outOfRange: false,
 } as const satisfies Partial<NetworkView>
+
+/** O que a gaveta "Filtros" do celular edita. */
+export type Draft = Pick<
+  NetworkView,
+  'clientId' | 'storeId' | 'sort' | 'status' | 'belowTarget' | 'outOfRange'
+>
+
+/**
+ * Só os campos da gaveta. O Pick restringe o tipo, mas um objeto maior passaria inteiro: a página e
+ * as lojas abertas iriam junto no "Aplicar" e anulariam a volta à página 1 do nextView.
+ */
+export function filtersOf(view: Draft): Draft {
+  const { clientId, storeId, sort, status, belowTarget, outOfRange } = view
+  return { clientId, storeId, sort, status, belowTarget, outOfRange }
+}
 
 export function toStoresParams(view: NetworkView): StoresParams {
   return {

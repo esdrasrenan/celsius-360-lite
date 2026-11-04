@@ -52,7 +52,7 @@ export function LiveChip() {
 
 /**
  * Chip ao vivo (seção 3.14): estado do SSE e o "agora" da ingestão. A explicação abre em hover,
- * foco ou toque (Popover com openOnHover). No celular o chip vira só o ponto, mas nunca some.
+ * foco ou toque (Popover com openOnHover). Abaixo de lg o chip vira só o ponto, mas nunca some.
  */
 export function LiveChipView({
   status,
@@ -71,10 +71,10 @@ export function LiveChipView({
         openOnHover
         delay={300}
         aria-label={label}
-        className="pressionavel inline-flex size-8 shrink-0 items-center justify-center gap-1.5 rounded-full bg-superficie font-medium text-legenda text-texto-2 ring-1 ring-borda ring-inset hover:ring-borda-forte data-popup-open:ring-borda-forte md:h-7 md:w-auto md:px-2.5"
+        className="pressionavel inline-flex size-8 shrink-0 items-center justify-center gap-1.5 rounded-full bg-superficie font-medium text-legenda text-texto-2 ring-1 ring-borda ring-inset hover:ring-borda-forte data-popup-open:ring-borda-forte lg:h-7 lg:w-auto lg:px-2.5"
       >
         <StatusDot tone={TONE[status]} pulse={status === 'live'} />
-        <span className="num hidden whitespace-nowrap md:inline">{label}</span>
+        <span className="num hidden whitespace-nowrap lg:inline">{label}</span>
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Positioner side="bottom" align="end" sideOffset={6} collisionPadding={8} className="z-50">

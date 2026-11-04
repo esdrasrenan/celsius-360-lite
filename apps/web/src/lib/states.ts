@@ -8,7 +8,7 @@ import type {
   StoreSort,
   StoreStatus,
 } from '@celsius/contracts'
-import { COMFORT_CRITICAL_PCT, COMFORT_TARGET_PCT } from '@celsius/domain'
+import { COMFORT_CRITICAL_PCT, COMFORT_TARGET_PCT, COVERAGE_MIN_PCT } from '@celsius/domain'
 import {
   Alert02Icon,
   AlertDiamondIcon,
@@ -44,7 +44,7 @@ export interface StateInfo {
   countsInComfort?: boolean
 }
 
-export { COMFORT_CRITICAL_PCT, COMFORT_TARGET_PCT }
+export { COMFORT_CRITICAL_PCT, COMFORT_TARGET_PCT, COVERAGE_MIN_PCT }
 
 export const DEVICE_STATE: Record<DeviceStatus, StateInfo> = {
   online: {

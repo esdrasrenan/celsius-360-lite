@@ -201,13 +201,18 @@ export function useEnvironmentDaily(id: string, range: RangeInput, options: { en
   })
 }
 
-/** Relatório de qualidade dos dados; a API só responde ao administrador da Diel. */
+/**
+ * Relatório de qualidade dos dados; a API só responde ao administrador da Diel. Enquanto ele não
+ * existe (404, ingestão ainda reproduzindo), pergunta de novo a cada 15 s.
+ */
 export function useQuality(options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: keys.quality,
     queryFn: ({ signal }) => api<QualityReport>('/quality', { signal }),
     staleTime: 300_000,
     enabled: options.enabled,
+    refetchInterval: (query) =>
+      query.state.error instanceof ApiError && query.state.error.status === 404 ? 15_000 : false,
   })
 }
 

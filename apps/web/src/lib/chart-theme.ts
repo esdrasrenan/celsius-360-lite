@@ -49,11 +49,15 @@ export function chartTokens(root: Element = document.documentElement): ChartToke
 export interface HatchPattern {
   image: HTMLCanvasElement
   repeat: 'repeat'
+  scaleX: number
+  scaleY: number
 }
 
 /**
  * Hachura para markArea e itemStyle do ECharts: traço diagonal num ladrilho de 6 px, no mesmo
- * desenho dos utilitários hachura-sem-dados (45°, ↗) e hachura-descartada (135°, ↘).
+ * desenho dos utilitários hachura-sem-dados (45°, ↗) e hachura-descartada (135°, ↘). O ladrilho
+ * tem 6 px de tela para ficar nítido, e a escala 1/DPR o devolve a 6 px CSS: o zrender pinta num
+ * contexto já escalado pelo DPR. As pontas nos cantos fecham a emenda entre ladrilhos vizinhos.
  */
 export function hatchPattern(
   stroke: string,
@@ -71,15 +75,24 @@ export function hatchPattern(
   context.strokeStyle = stroke
   context.lineWidth = width
   context.beginPath()
-  if (angle === 45) {
-    context.moveTo(0, 6)
-    context.lineTo(6, 0)
-  } else {
-    context.moveTo(0, 0)
-    context.lineTo(6, 6)
+  const segments: ReadonlyArray<readonly [number, number, number, number]> =
+    angle === 45
+      ? [
+          [0, 6, 6, 0],
+          [-1, 1, 1, -1],
+          [5, 7, 7, 5],
+        ]
+      : [
+          [0, 0, 6, 6],
+          [-1, 5, 1, 7],
+          [5, -1, 7, 1],
+        ]
+  for (const [x1, y1, x2, y2] of segments) {
+    context.moveTo(x1, y1)
+    context.lineTo(x2, y2)
   }
   context.stroke()
-  return { image: canvas, repeat: 'repeat' }
+  return { image: canvas, repeat: 'repeat', scaleX: 1 / ratio, scaleY: 1 / ratio }
 }
 
 /** Com movimento reduzido, o ECharts recebe animation: false (seção 1.7). */

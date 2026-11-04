@@ -10,6 +10,7 @@ import { Icon } from '../../components/Icon'
 import { Kpi } from '../../components/Kpi'
 import { Skeleton } from '../../components/Skeleton'
 import { TruncatedText } from '../../components/TruncatedText'
+import { downloadCsv } from '../../lib/csv'
 import {
   formatDuration,
   formatInteger,
@@ -27,10 +28,9 @@ import {
   anomalies,
   type CsvColumn,
   discardsByReason,
-  downloadCsv,
   environmentHref,
   periodCovering,
-  toCsv,
+  tableCsv,
 } from './report'
 import { type EnvironmentName, useEnvironmentNames } from './useEnvironmentNames'
 
@@ -90,7 +90,7 @@ function CsvButton<T>({
       variant="ghost"
       icon={Download04Icon}
       disabled={rows.length === 0}
-      onClick={() => downloadCsv(filename, toCsv(columns, rows))}
+      onClick={() => downloadCsv(filename, tableCsv(columns, rows))}
       aria-label="Baixar CSV"
       className="-me-2"
     >

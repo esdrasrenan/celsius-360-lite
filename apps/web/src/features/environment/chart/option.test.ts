@@ -1,16 +1,21 @@
 import { describe, expect, test } from 'bun:test'
+import type { Series } from '@celsius/contracts'
 import type { DataZoomComponentOption } from 'echarts/components'
+import { SVGRenderer } from 'echarts/renderers'
+import { type ChartInstance, echarts } from './echarts'
 import type { LayerVisibility } from './layers'
 import { buildModel } from './model'
 import {
   ANCHOR_INDEX,
   buildOption,
   closedIsDense,
+  followView,
   hasBrush,
   layerVisibility,
   minZoomSpan,
   plotBottom,
   scaleFor,
+  type View,
 } from './option'
 import { at, HOUR, iso, sampleSeries, TZ, theme } from './testing'
 
@@ -75,6 +80,25 @@ describe('zoom e brush (seção 5.7)', () => {
   })
 })
 
+describe('zoom no tempo real: a janela fica onde o usuário a pôs (seção 5.9)', () => {
+  const before: View = [at(0), at(24)]
+  // A ingestão andou 30 min: o período inteiro desliza junto com o "agora"
+  const after: View = [at(0.5), at(24.5)]
+
+  test('janela no meio do período fica no mesmo intervalo absoluto', () => {
+    expect(followView([at(6), at(9)], before, after)).toEqual([at(6), at(9)])
+  })
+
+  test('janela encostada no fim acompanha o "agora", e a visão inteira continua inteira', () => {
+    expect(followView([at(21), at(24)], before, after)).toEqual([at(21.5), at(24.5)])
+    expect(followView(before, before, after)).toEqual(after)
+  })
+
+  test('janela que sairia pelo começo fica presa nele, com a mesma largura', () => {
+    expect(followView([at(0), at(3)], before, after)).toEqual([at(0.5), at(3.5)])
+  })
+})
+
 describe('option', () => {
   const option = buildOption({
     model,
@@ -84,7 +108,6 @@ describe('option', () => {
     timeZone: TZ,
     plotWidth: 1000,
     view: [model.from, model.to],
-    summary: 'Resumo',
     edge: { max: true, min: true, outdoor: true, pill: 'top' },
     animate: false,
     formatTooltip: () => '',
@@ -130,9 +153,9 @@ describe('option', () => {
     expect(option.tooltip).not.toHaveProperty('appendTo')
   })
 
-  test('Inter no canvas e aria ligado com o resumo', () => {
+  test('Inter no canvas e aria ligado, sem o rótulo automático (o resumo vai na figura)', () => {
     expect(option.textStyle).toMatchObject({ fontFamily: 'fontFamily', fontSize: 12 })
-    expect(option.aria).toEqual({ enabled: true, label: { description: 'Resumo' } })
+    expect(option.aria).toEqual({ enabled: true, label: { enabled: false } })
   })
 
   test('24 horas sem brush', () => {
@@ -147,12 +170,69 @@ describe('option', () => {
       timeZone: TZ,
       plotWidth: 1000,
       view: [day.from, day.to],
-      summary: '',
       edge: { max: true, min: true, outdoor: true, pill: 'hidden' },
       animate: false,
       formatTooltip: () => '',
       formatStripTooltip: () => '',
     })
     expect((oneDay.dataZoom as DataZoomComponentOption[]).map((zoom) => zoom.type)).toEqual(['inside'])
+  })
+})
+
+describe('cor por faixa numa instância real do ECharts, com replaceMerge', () => {
+  echarts.use([SVGRenderer])
+
+  const optionFor = (series: Series, previous: Series | null = null) => {
+    const current = buildModel(series, previous)
+    return buildOption({
+      model: current,
+      theme,
+      visible: { ...all, previous: previous != null },
+      fitOutdoor: false,
+      timeZone: TZ,
+      plotWidth: 700,
+      view: [current.from, current.to],
+      edge: { max: true, min: true, outdoor: true, pill: 'top' },
+      animate: false,
+      formatTooltip: () => '',
+      formatStripTooltip: () => '',
+    })
+  }
+  const shifted = (series: Series, ms: number) => ({
+    ...series,
+    from: iso(Date.parse(series.from) + ms),
+    to: iso(Date.parse(series.to) + ms),
+    points: series.points.map((point) => ({ ...point, t: iso(Date.parse(point.t) + ms) })),
+  })
+
+  /**
+   * Cor que a Temperatura recebeu às 12h (na faixa), às 15h (acima) e no dia seguinte às 18h
+   * (abaixo). Se o visualMap apontar para outra série, ela sai na cor da paleta padrão.
+   */
+  const painted = (chart: ChartInstance) =>
+    [12, 15, 42].map((dataIndex) => chart.getVisual({ seriesId: 'temperature', dataIndex }, 'color'))
+
+  test('Comparar e troca de período deixam buracos e séries novas no fim; o visualMap acha a Temperatura', () => {
+    const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 800, height: 400 })
+    const current = sampleSeries()
+    const previous = shifted(current, -2 * DAY)
+    // Sem lacunas (some a série "discarded", e fica um buraco no meio) e um dia a mais no fim
+    const other = sampleSeries({
+      to: iso(at(72)),
+      points: [...current.points, ...shifted(current, 2 * DAY).points.slice(0, 24)],
+      gaps: [],
+    })
+    const steps: Array<[string, ReturnType<typeof optionFor>, string[] | undefined]> = [
+      ['carga', optionFor(current), undefined],
+      ['Comparar ligado', optionFor(current, previous), ['series']],
+      ['Comparar desligado', optionFor(current), ['series']],
+      ['troca de período, sem lacunas', optionFor(other), ['series', 'dataZoom']],
+      ['de volta, com lacunas', optionFor(current), ['series', 'dataZoom']],
+    ]
+    for (const [step, option, replaceMerge] of steps) {
+      chart.setOption(option, replaceMerge ? { replaceMerge } : undefined)
+      expect(painted(chart), step).toEqual(['temperatura', 'acima', 'abaixo'])
+    }
+    chart.dispose()
   })
 })

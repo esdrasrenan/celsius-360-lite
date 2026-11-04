@@ -94,6 +94,8 @@ const PAIRS: Array<[string, string, number, string]> = [
   [g('acima'), g('superficie'), GRAPHIC, 'temperatura acima'],
   [g('abaixo'), g('superficie'), GRAPHIC, 'temperatura abaixo'],
   [g('temperatura'), g('superficie'), GRAPHIC, 'temperatura na faixa'],
+  [g('fora-horario'), g('superficie'), GRAPHIC, 'temperatura com a loja fechada'],
+  [g('comparacao'), g('superficie'), GRAPHIC, 'período anterior'],
 ]
 
 describe('contraste dos tokens (seção 1.2)', () => {

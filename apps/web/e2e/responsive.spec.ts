@@ -2,13 +2,16 @@ import { expect, type Page, test } from '@playwright/test'
 import { sessionFile } from './support'
 
 /**
- * Critério 8.4: em 320, 390 e 1440 px, o login, a visão da rede e o detalhe de um ambiente não
- * rolam na horizontal, não têm texto visível abaixo de 12 px, caixa alta nem atributo title.
+ * Critério 8.4: em 320, 390 e 1440 px, e nos tablets de 768 e 820 px (onde o cabeçalho já mostra a
+ * navegação), o login, a visão da rede, o detalhe de um ambiente e a qualidade dos dados não rolam
+ * na horizontal, não têm texto visível abaixo de 12 px, caixa alta nem atributo title.
  */
 
 const VIEWPORTS = [
   { width: 320, height: 820 },
   { width: 390, height: 844 },
+  { width: 768, height: 1024 },
+  { width: 820, height: 1180 },
   { width: 1440, height: 900 },
 ]
 
@@ -27,6 +30,10 @@ const ROUTES: { path: string; ready: (page: Page) => Promise<void> }[] = [
       await expect(page.getByRole('heading', { level: 1, name: 'Salão' })).toBeVisible()
       await expect(page.locator('#grafico-temperatura canvas').first()).toBeVisible()
     },
+  },
+  {
+    path: '/qualidade',
+    ready: (page) => expect(page.getByRole('heading', { name: 'Anomalias encontradas' })).toBeVisible(),
   },
 ]
 

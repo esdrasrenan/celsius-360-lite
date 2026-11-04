@@ -8,6 +8,7 @@ import { Definition } from '../../components/Definition'
 import { Icon } from '../../components/Icon'
 import { ProgressBar } from '../../components/ProgressBar'
 import { Skeleton } from '../../components/Skeleton'
+import { useMediaQuery } from '../../components/shell/hooks'
 import { DEFINITIONS } from '../../lib/states'
 import { CELL_SHOW, StoreRows } from './StoreRows'
 
@@ -124,12 +125,15 @@ function SkeletonRows() {
   )
 }
 
-/** Uma linha só com o conteúdo (vazio ou erro), mantendo o cabeçalho da tabela visível. */
-function MessageRow({ children }: { children: ReactNode }) {
+/**
+ * Uma linha só com o conteúdo (vazio ou erro), mantendo o cabeçalho da tabela visível. O colSpan
+ * segue as colunas visíveis: a mais, a grade ganha colunas sem largura e o cabeçalho encolhe.
+ */
+function MessageRow({ columns, children }: { columns: number; children: ReactNode }) {
   return (
     <tbody className="block md:table-row-group">
       <tr className="block md:table-row">
-        <td colSpan={8} className="block md:table-cell">
+        <td colSpan={columns} className="block md:table-cell">
           {children}
         </td>
       </tr>
@@ -190,6 +194,11 @@ export function StoreTable({
   footer?: ReactNode
 }) {
   const flash = useFlash(search, !loading && !reloading)
+  const desktop = useMediaQuery('(min-width: 48rem)')
+  const large = useMediaQuery('(min-width: 64rem)')
+  const wide = useMediaQuery('(min-width: 80rem)')
+  // A partir de md: 5 colunas; lg mostra Telemetria; xl, Faixa e Cobertura
+  const columns = 5 + (large ? 1 : 0) + (wide ? 2 : 0)
   const allOpen = items.length > 0 && items.every((store) => open.has(store.id))
 
   return (
@@ -253,7 +262,7 @@ export function StoreTable({
         {loading ? (
           <SkeletonRows />
         ) : message ? (
-          <MessageRow>{message}</MessageRow>
+          <MessageRow columns={columns}>{message}</MessageRow>
         ) : (
           items.map((store) => (
             <StoreRows
@@ -266,6 +275,7 @@ export function StoreTable({
               now={now}
               period={period}
               from={from}
+              desktop={desktop}
             />
           ))
         )}

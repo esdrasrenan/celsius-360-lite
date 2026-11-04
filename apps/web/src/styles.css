@@ -39,10 +39,10 @@
   --grafico-temperatura: #0b0c59;
   --grafico-acima: #e5552e;
   --grafico-abaixo: #1f7ccc;
-  --grafico-fora-horario: #a2a6c2; /* trecho com a loja fechada, 1,25 px */
+  --grafico-fora-horario: var(--p-n500); /* loja fechada, 1,25 px: 3,42:1 branco, 3,18:1 fechado */
   --grafico-variacao: rgb(54 59 196 / 0.12); /* banda mín–máx */
   --grafico-externa: #6e7398; /* 4,60:1, tracejada */
-  --grafico-comparacao: rgb(11 12 89 / 0.4);
+  --grafico-comparacao: #7c80d9; /* celsius a 65% no branco: 3,54:1, azul distinto dos cinzas */
   --grafico-faixa: rgb(0 185 206 / 0.1);
   --grafico-faixa-borda: #0a8796; /* 4,27:1 */
   --grafico-faixa-texto: #00707d; /* 5,81:1 */

@@ -10,8 +10,14 @@ import {
   NBSP,
   plural,
 } from '../../lib/format'
-import { COMFORT_TARGET_PCT, comfortTone, DEFINITIONS, PERIOD_LABEL } from '../../lib/states'
-import { difference, unbrokenDuration } from './detail'
+import {
+  COMFORT_TARGET_PCT,
+  COVERAGE_MIN_PCT,
+  comfortTone,
+  DEFINITIONS,
+  PERIOD_LABEL,
+} from '../../lib/states'
+import { coveredDuration, difference, unbrokenDuration } from './detail'
 import { KpiCell, type KpiChange, KpiDuration, KpiNumber } from './KpiCell'
 
 /** Número do percentual sem o "%" (que vira unidade): "82,4", "<0,1". */
@@ -48,14 +54,14 @@ function change(
   const shown = Math.round(delta / step) * step
   const flat = Math.abs(delta) < flatBelow
   const direction = shown > 0 ? 'up' : shown < 0 ? 'down' : 'flat'
-  const anteriores =
+  const previousLabel =
     comparison.period === '1d' ? 'as 24 horas anteriores' : `os ${PERIOD_LABEL[comparison.period]} anteriores`
   return {
     amount: amount(Math.abs(shown)),
     direction,
     verdict: flat || higherIsBetter == null ? 'neutral' : delta > 0 === higherIsBetter ? 'good' : 'bad',
     comparison: `vs ${PERIOD_LABEL[comparison.period]} anteriores`,
-    hint: `Diferença para ${anteriores} (${comparison.range})`,
+    hint: `Diferença para ${previousLabel} (${comparison.range})`,
   }
 }
 
@@ -76,13 +82,13 @@ function comfortContext(indicators: Indicators): string {
   return `Todo o horário na faixa · meta ${COMFORT_TARGET_PCT}%`
 }
 
-/** Barra de cobertura com a marca da meta; a parte sem leitura fica hachurada. */
+/** Barra de cobertura com a marca da cobertura mínima; a parte sem leitura fica hachurada. */
 function CoverageBar({ coverage }: { coverage: number }) {
   return (
-    <Hint content={`${formatPercent(coverage)} do horário com leitura válida · meta ${COMFORT_TARGET_PCT}%`}>
+    <Hint content={`${formatPercent(coverage)} do horário com leitura válida · meta ${COVERAGE_MIN_PCT}%`}>
       <div
         role="img"
-        aria-label={`${formatPercent(coverage)} do horário com leitura válida; meta ${COMFORT_TARGET_PCT}%`}
+        aria-label={`${formatPercent(coverage)} do horário com leitura válida; meta ${COVERAGE_MIN_PCT}%`}
         className="relative h-1 w-full"
       >
         <div className="hachura-sem-dados flex size-full overflow-hidden rounded-xs">
@@ -91,7 +97,7 @@ function CoverageBar({ coverage }: { coverage: number }) {
         <span
           aria-hidden="true"
           className="absolute top-1/2 h-2 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-texto"
-          style={{ left: `${COMFORT_TARGET_PCT}%` }}
+          style={{ left: `${COVERAGE_MIN_PCT}%` }}
         />
       </div>
     </Hint>
@@ -113,7 +119,7 @@ export function PeriodKpis({
 }) {
   const previous = comparison?.indicators
   const comfortLevel = comfortTone(indicators.comfortPct)
-  const lowCoverage = indicators.coveragePct != null && indicators.coveragePct < COMFORT_TARGET_PCT
+  const lowCoverage = indicators.coveragePct != null && indicators.coveragePct < COVERAGE_MIN_PCT
   const closedGapMinutes = Math.max(0, indicators.gapMinutes - indicators.gapMinutesInHours)
   const gapContext = [
     closedGapMinutes > 0 && `+${unbrokenDuration(closedGapMinutes)} com a loja fechada`,
@@ -187,7 +193,7 @@ export function PeriodKpis({
       tone={lowCoverage ? 'alerta' : 'neutro'}
       context={
         indicators.minutesExpected > 0
-          ? `${unbrokenDuration(indicators.minutesInHours)} de ${unbrokenDuration(indicators.minutesExpected)} do horário com leitura`
+          ? `${coveredDuration(indicators.minutesInHours)} de ${unbrokenDuration(indicators.minutesExpected)} do horário com leitura`
           : 'Sem horário de funcionamento no período'
       }
       change={

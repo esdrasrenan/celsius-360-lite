@@ -1,5 +1,5 @@
 import type { PeriodKey, StoreList, StoreListItem } from '@celsius/contracts'
-import { periodRange } from '@celsius/domain'
+import { PERIOD_KEYS, periodRange } from '@celsius/domain'
 import { Download04Icon, FilterRemoveIcon, SearchRemoveIcon, Store01Icon } from '@hugeicons/core-free-icons'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
@@ -15,13 +15,13 @@ import {
 import { Button } from '../../components/Button'
 import { EmptyState } from '../../components/EmptyState'
 import { ErrorState } from '../../components/ErrorState'
-import { Menu } from '../../components/Menu'
 import { Pagination } from '../../components/Pagination'
 import { SegmentedControl } from '../../components/SegmentedControl'
 import { Skeleton } from '../../components/Skeleton'
+import { downloadCsv } from '../../lib/csv'
 import { formatPeriod, NETWORK_TIME_ZONE, NETWORK_TIME_ZONE_LABEL, plural } from '../../lib/format'
 import { PERIOD_FULL_LABEL, PERIOD_LABEL } from '../../lib/states'
-import { csvFileName, downloadFile, storesCsv } from './csv'
+import { csvFileName, storesCsv } from './csv'
 import { FilterBar } from './FilterBar'
 import { NetworkKpis } from './NetworkKpis'
 import {
@@ -29,7 +29,6 @@ import {
   defaultOpen,
   filterCount,
   type NetworkView,
-  PERIODS,
   toStoresParams,
   useNetworkView,
 } from './params'
@@ -75,7 +74,8 @@ export function NetworkPage() {
   const singleStore = !!user && !user.allStores && user.storeIds.length === 1
   const params = toStoresParams(view)
   const stores = useStores(params)
-  const clients = useClients({ enabled: !singleStore })
+  // O gerente não tem o seletor, mas um ?cliente= no link ainda precisa do nome ou do saneamento
+  const clients = useClients({ enabled: !singleStore || view.clientId !== null })
   const filtered = filterCount(view) > 0
   // Sem filtro, a própria lista dá o tamanho do acesso; com filtro, uma consulta de 1 item
   const scope = useQuery({
@@ -132,7 +132,7 @@ export function NetworkPage() {
     setExportFailed(false)
     try {
       const all = await fetchAllStores((page) => client.fetchQuery(queries.stores(page)), params)
-      downloadFile(csvFileName(view.period, now), storesCsv(all))
+      downloadCsv(csvFileName(view.period, now), storesCsv(all))
     } catch {
       setExportFailed(true)
     } finally {
@@ -208,7 +208,6 @@ export function NetworkPage() {
         ? NETWORK_TIME_ZONE_LABEL
         : null
 
-  const exportItems = [{ label: 'Baixar CSV', aux: 'CSV', onSelect: exportCsv }]
   const cannotExport = !data || data.total === 0 || !!error
 
   return (
@@ -228,41 +227,30 @@ export function NetworkPage() {
               {subtitle ?? <Skeleton className="h-3 w-56" />}
             </p>
           </div>
-          <div className="md:hidden">
-            <Menu
-              trigger={
-                <Button
-                  icon={Download04Icon}
-                  busy={exporting}
-                  disabled={cannotExport}
-                  aria-label="Exportar"
-                  className="w-9 px-0 pointer-coarse:w-controle-toque"
-                />
-              }
-              items={exportItems}
-            />
-          </div>
+          <Button
+            icon={Download04Icon}
+            busy={exporting}
+            disabled={cannotExport}
+            aria-label="Baixar CSV"
+            onClick={exportCsv}
+            className="w-9 px-0 md:hidden pointer-coarse:w-controle-toque"
+          />
         </div>
         <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
-          <div className="hidden md:block">
-            <Menu
-              trigger={
-                <Button
-                  icon={Download04Icon}
-                  busy={exporting}
-                  busyLabel="Exportando…"
-                  disabled={cannotExport}
-                >
-                  Exportar
-                </Button>
-              }
-              items={exportItems}
-            />
-          </div>
+          <Button
+            icon={Download04Icon}
+            busy={exporting}
+            busyLabel="Exportando…"
+            disabled={cannotExport}
+            onClick={exportCsv}
+            className="max-md:hidden"
+          >
+            Baixar CSV
+          </Button>
           <SegmentedControl
             legend="Período"
             value={view.period}
-            options={PERIODS.map((period) => ({
+            options={PERIOD_KEYS.map((period) => ({
               value: period,
               label: PERIOD_LABEL[period],
               accessibleLabel: PERIOD_FULL_LABEL[period],

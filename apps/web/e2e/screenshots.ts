@@ -1,7 +1,7 @@
 /**
  * Gera as capturas do README (docs/img) a partir da stack principal no ar, com os dados do desafio:
  *
- *   bun run apps/web/e2e/capturas.ts
+ *   bun run apps/web/e2e/screenshots.ts
  *
  * A senha vem do DEMO_PASSWORD do .env da raiz (ou da variável CAPTURA_SENHA) e nunca é impressa.
  * CAPTURA_URL troca o endereço (padrão http://127.0.0.1:8080).
@@ -38,7 +38,12 @@ const page = await browser.newPage({
 await page.goto(`${base}/entrar`)
 await page.getByRole('heading', { level: 1, name: 'Entrar' }).waitFor()
 await settle(page)
+// A coluna do formulário passa de 900 px: a janela cresce até caber a caixa com os comandos da senha
+const loginHeight = await page.evaluate(() => document.documentElement.scrollHeight)
+await page.setViewportSize({ width: 1440, height: Math.max(900, loginHeight) })
+await settle(page)
 await page.screenshot({ path: `${out}/login.png` })
+await page.setViewportSize({ width: 1440, height: 900 })
 
 await page.getByLabel('E-mail').fill(process.env.CAPTURA_EMAIL ?? 'ana.ribeiro@diel.example')
 await page.getByLabel('Senha').fill(password)

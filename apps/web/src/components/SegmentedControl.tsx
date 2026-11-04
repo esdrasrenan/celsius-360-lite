@@ -44,9 +44,11 @@ export function SegmentedControl<V extends string>({
 }) {
   const name = useId()
   return (
+    // shrink-0: como item encolhível de uma coluna flex, o fieldset não passa a altura aos
+    // segmentos no Chromium, que ficam com a altura do texto no alto do trilho
     <fieldset
       className={clsx(
-        'flex h-controle w-full min-w-0 rounded-md bg-superficie-3 p-0.5 ring-1 ring-borda ring-inset sm:inline-flex sm:w-auto pointer-coarse:h-controle-toque',
+        'flex h-controle w-full shrink-0 rounded-md bg-superficie-3 p-0.5 ring-1 ring-borda ring-inset sm:inline-flex sm:w-auto pointer-coarse:h-controle-toque',
         className,
       )}
     >
@@ -90,7 +92,7 @@ export interface PillOption<V extends string> {
 
 /**
  * Pílulas de filtro de escolha única (seção 3.10), também com rádios nativos. Contagem zero
- * esmaece a pílula, que continua selecionável.
+ * esmaece o rótulo para texto-3 (5,66:1), e a pílula continua selecionável.
  */
 export function PillGroup<V extends string>({
   label,
@@ -126,8 +128,9 @@ export function PillGroup<V extends string>({
               'pressionavel relative inline-flex h-controle-sm cursor-pointer select-none items-center gap-1.5 whitespace-nowrap rounded-full px-3 font-medium text-apoio ring-1 ring-inset has-focus-visible:outline-2 has-focus-visible:outline-foco has-focus-visible:outline-offset-2',
               checked
                 ? 'bg-inverso text-texto-inverso ring-inverso'
-                : 'bg-superficie text-texto-2 ring-borda hover:bg-superficie-2 hover:text-texto',
-              empty && !checked && 'opacity-55',
+                : 'bg-superficie ring-borda hover:bg-superficie-2 hover:text-texto',
+              // Esmaece pela cor, não pela opacidade: a pílula continua um rádio e precisa de 4,5:1
+              !checked && (empty ? 'text-texto-3' : 'text-texto-2'),
             )}
           >
             <input

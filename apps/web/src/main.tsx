@@ -30,8 +30,14 @@ const router = createBrowserRouter([
         element: <AppShell />,
         children: [
           {
-            // Casca: erro numa tela aparece dentro do cabeçalho, que continua navegável
+            // Casca: erro numa tela aparece dentro do cabeçalho, que continua navegável. No acesso
+            // direto a uma tela sob demanda, a casca já aparece e só o conteúdo espera o chunk
             errorElement: <RouteError inShell />,
+            hydrateFallbackElement: (
+              <div aria-busy="true" className="min-h-96">
+                <span className="so-leitor">Carregando</span>
+              </div>
+            ),
             children: [
               { path: '/', element: <NetworkPage /> },
               {

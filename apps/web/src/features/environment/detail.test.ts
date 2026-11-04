@@ -2,10 +2,12 @@ import { describe, expect, test } from 'bun:test'
 import type { DailyComfort, ProfileCell, Series } from '@celsius/contracts'
 import {
   compareAvailability,
+  coveredDuration,
   csvFileName,
   dailyAxisLabels,
   dailyState,
   gapsCsv,
+  keepSamePeriod,
   localDay,
   networkHref,
   overlapMinutes,
@@ -84,6 +86,14 @@ describe('lacunas e situação do bucket', () => {
   test('duração sem quebra no meio (achado 17)', () => {
     expect(unbrokenDuration(995)).toBe('16 h 35 min')
     expect(unbrokenDuration(3125, 'calendar')).toBe('2 d 4 h')
+  })
+
+  test('tempo coberto arredonda para baixo, como o percentual: nunca "64 h de 64 h" com 99,6%', () => {
+    const plain = (minutes: number) => coveredDuration(minutes).replaceAll(' ', ' ')
+    expect(plain(3827.5)).toBe('63 h')
+    expect(plain(3840)).toBe('64 h')
+    expect(plain(19_830)).toBe('330 h')
+    expect(plain(1439.6)).toBe('23 h 59 min')
   })
 
   test('lacuna, loja fechada e posição na faixa', () => {
@@ -190,6 +200,31 @@ describe('tendência da última leitura', () => {
 describe('comparação com o período anterior', () => {
   const indicators = (coveragePct: number | null) => ({ indicators: { coveragePct } }) as never
   const current = series({ points: [{ t: '2026-01-12T03:00:00.000Z', avg: 25.1, min: 25, max: 25.3 }] })
+
+  test('no tempo real a chave do anterior anda, e a resposta velha fica só se for do mesmo período', () => {
+    const keep = keepSamePeriod('AMB-014', {
+      from: '2026-01-27T03:15:00.000Z',
+      to: '2026-02-03T03:15:00.000Z',
+    })
+    const key = (id: string, from: string, to: string) => ({
+      queryKey: ['environment', id, 'summary', { from, to }],
+    })
+    // A ingestão andou 15 min: outra chave, os mesmos 7 dias
+    expect(keep('anterior', key('AMB-014', '2026-01-27T03:00:00.000Z', '2026-02-03T03:00:00.000Z'))).toBe(
+      'anterior',
+    )
+    // Troca para 24 horas ou para outro ambiente: nada do que estava na tela vale
+    expect(keep('anterior', key('AMB-014', '2026-02-02T03:00:00.000Z', '2026-02-03T03:00:00.000Z'))).toBe(
+      undefined,
+    )
+    expect(keep('anterior', key('AMB-003', '2026-01-27T03:00:00.000Z', '2026-02-03T03:00:00.000Z'))).toBe(
+      undefined,
+    )
+    expect(keep('anterior', undefined)).toBe(undefined)
+    // Sem o resumo atual ainda não há período anterior
+    const none = keepSamePeriod('AMB-014', { from: '', to: '' })
+    expect(none('anterior', key('AMB-014', '', ''))).toBe(undefined)
+  })
 
   test('com 80% de cobertura ou mais, compara', () => {
     expect(compareAvailability(indicators(80), current, TZ)).toEqual({ ok: true })

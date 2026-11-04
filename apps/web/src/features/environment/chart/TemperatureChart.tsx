@@ -13,6 +13,7 @@ import {
   useState,
 } from 'react'
 import { Button } from '../../../components/Button'
+import { useMediaQuery } from '../../../components/shell/hooks'
 import { chartHatches, chartTokens, prefersReducedMotion } from '../../../lib/chart-theme'
 import { formatPeriod, formatRange, formatTimeZoneLabel } from '../../../lib/format'
 import { DAY_MS, formatWindow } from './axis'
@@ -27,15 +28,17 @@ import {
   buildOption,
   closedIsDense,
   edgeSeries,
+  followView,
   GRID,
   hasBrush,
   layerVisibility,
   minZoomSpan,
   plotBottom,
   scaleFor,
+  type View,
   xAxes,
 } from './option'
-import { describeChart } from './summary'
+import { type ChartIndicators, describeChart } from './summary'
 import {
   announcement,
   BUCKET_TITLE,
@@ -45,15 +48,12 @@ import {
   stripText,
   tooltipContent,
 } from './tooltip'
-import { useMediaQuery } from './useMediaQuery'
 
 export interface TemperatureChartHandle {
   /** Amplia no intervalo (ISO 8601) e rola até o gráfico: o "Ver no gráfico" da lista de lacunas. */
   zoomTo(fromIso: string, toIso: string): void
   resetZoom(): void
 }
-
-type View = readonly [number, number]
 
 interface ZoomEvent {
   start?: number
@@ -64,6 +64,11 @@ interface ZoomEvent {
 }
 
 const MOBILE_QUERY = '(max-width: 639.98px)'
+/**
+ * Largura do canvas na impressão: a do cartão no contêiner de 1280 (print.css). O ECharts fixa o
+ * canvas em px, e impresso a partir de uma janela estreita ele sairia em miniatura.
+ */
+const PRINT_WIDTH = 1176
 /** No celular, 30 dias abrem nos últimos 7 (seção 4.3). */
 const MOBILE_WINDOW = 7 * DAY_MS
 const ANNOUNCE_EVERY_MS = 500
@@ -93,12 +98,15 @@ interface Snapshot {
 export function TemperatureChart({
   series,
   previous,
+  indicators = null,
   timeZone,
   title,
   ref,
 }: {
   series: Series
   previous: Series | null
+  /** Indicadores do mesmo período: o resumo acessível repete os números dos KPIs. */
+  indicators?: ChartIndicators | null
   timeZone: string
   title: string
   ref?: Ref<TemperatureChartHandle>
@@ -143,7 +151,7 @@ export function TemperatureChart({
     () => scaleFor(model, visible, fitOutdoor),
     [model, visible, fitOutdoor],
   )
-  const summary = useMemo(() => describeChart(model, timeZone), [model, timeZone])
+  const summary = useMemo(() => describeChart(model, timeZone, indicators), [model, timeZone, indicators])
   const total = model.to - model.from
   const zoomed = view != null && view[1] - view[0] < total * 0.995
   const plot = { width: plotWidth, height: plotHeight }
@@ -173,6 +181,17 @@ export function TemperatureChart({
       if (!(event as WheelEvent).ctrlKey) event.stopPropagation()
     }
     for (const name of WHEEL_EVENTS) element.addEventListener(name, passWheel, { capture: true })
+    // Antes da impressão o canvas ganha a largura do papel; depois volta à do contêiner ('auto':
+    // sem ele, o zrender guardaria a largura fixa). O flush pinta na hora, antes da página impressa
+    const resizeNow = (width: number | 'auto') => {
+      if (!instance) return
+      instance.resize({ width })
+      instance.getZr().flush()
+    }
+    const beforePrint = () => resizeNow(PRINT_WIDTH)
+    const afterPrint = () => resizeNow('auto')
+    window.addEventListener('beforeprint', beforePrint)
+    window.addEventListener('afterprint', afterPrint)
 
     void document.fonts.ready.then(() => {
       if (disposed) return
@@ -204,6 +223,8 @@ export function TemperatureChart({
       disposed = true
       cancelAnimationFrame(frame)
       for (const name of WHEEL_EVENTS) element.removeEventListener(name, passWheel, { capture: true })
+      window.removeEventListener('beforeprint', beforePrint)
+      window.removeEventListener('afterprint', afterPrint)
       observer?.disconnect()
       instance?.dispose()
       chartRef.current = null
@@ -230,14 +251,8 @@ export function TemperatureChart({
           ? [model.to - MOBILE_WINDOW, model.to]
           : [model.from, model.to]
     } else {
-      // O ECharts é a fonte da janela: lê start e end (percentuais) antes de reaplicar
-      const current = (chart.getOption().dataZoom as ZoomEvent[] | undefined)?.[0]
-      const start = current?.start ?? 0
-      const end = current?.end ?? 100
-      next = [
-        model.from + ((model.to - model.from) * start) / 100,
-        model.from + ((model.to - model.from) * end) / 100,
-      ]
+      // No tempo real o período anda com o "agora": o mesmo percentual já seria outro trecho
+      next = followView(viewRef.current ?? spanRef.current, spanRef.current, [model.from, model.to])
     }
     const range = {
       start: ((next[0] - model.from) / (model.to - model.from)) * 100,
@@ -254,7 +269,6 @@ export function TemperatureChart({
       timeZone,
       plotWidth,
       view: next,
-      summary,
       edge: edgeLabels(
         model,
         scale,
@@ -278,7 +292,7 @@ export function TemperatureChart({
     for (const zoom of option.dataZoom as ZoomEvent[]) Object.assign(zoom, range)
     chart.setOption(option, { replaceMerge: reset ? ['series', 'dataZoom'] : ['series'] })
     setView(next)
-  }, [ready, plotWidth, plotHeight, model, visible, scale, fitOutdoor, narrow, timeZone, summary])
+  }, [ready, plotWidth, plotHeight, model, visible, scale, fitOutdoor, narrow, timeZone])
 
   // Só as marcas do eixo X acompanham o zoom: refazer as séries a cada quadro do arraste pesaria
   useEffect(() => {
@@ -471,7 +485,7 @@ export function TemperatureChart({
       onPointerLeave={() => setFrozen(null)}
     >
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-        <div className="min-w-0">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
           <h2 id={titleId} className="text-texto text-titulo-3">
             {title}
           </h2>
@@ -543,7 +557,8 @@ export function TemperatureChart({
           ref={container}
           className={clsx('w-full touch-pan-y', brush ? 'h-87 sm:h-107' : 'h-74 sm:h-94')}
         />
-        <p id={summaryId} className="so-leitor">
+        {/* Oculto: o aria-describedby lê o texto, e o leitor de tela o ouve uma vez, no foco */}
+        <p id={summaryId} hidden>
           {summary}
         </p>
         {zoomHint && (

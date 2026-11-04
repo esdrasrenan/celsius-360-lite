@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { QualityReport } from '@celsius/contracts'
-import { anomalies, discardsByReason, environmentHref, periodCovering, toCsv } from './report'
+import { anomalies, discardsByReason, environmentHref, periodCovering, tableCsv } from './report'
 
 // Os números do conjunto real (docs/qualidade-dos-dados.md)
 const report: QualityReport = {
@@ -116,7 +116,7 @@ describe('link para o detalhe no período certo', () => {
 
 describe('CSV', () => {
   test('ponto e vírgula, decimal com vírgula e aspas só quando precisa', () => {
-    const csv = toCsv(
+    const csv = tableCsv(
       [
         { header: 'Dispositivo', value: (row: { id: string; value: number; note: string | null }) => row.id },
         { header: 'Valor (°C)', value: (row) => row.value },
@@ -127,6 +127,14 @@ describe('CSV', () => {
         { id: 'IOT014', value: 22, note: null },
       ],
     )
-    expect(csv).toBe('Dispositivo;Valor (°C);Nota\r\nIOT009;23,2;"travado; ""sensor"""\r\nIOT014;22;\r\n')
+    expect(csv).toBe('﻿Dispositivo;Valor (°C);Nota\r\nIOT009;23,2;"travado; ""sensor"""\r\nIOT014;22;\r\n')
+  })
+
+  test('dev_id fora do cadastro que começa com "=" não vira fórmula na planilha', () => {
+    const csv = tableCsv(
+      [{ header: 'Dispositivo', value: (row: { id: string }) => row.id }],
+      [{ id: '=HYPERLINK("https://exemplo.invalido";"IOT099")' }],
+    )
+    expect(csv.split('\r\n')[1]).toBe(`"'=HYPERLINK(""https://exemplo.invalido"";""IOT099"")"`)
   })
 })

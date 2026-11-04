@@ -411,7 +411,6 @@ export function Component() {
               value="93,2"
               unit="%"
               context="meta 90% · ponderado pelo tempo"
-              change={{ value: 2.1, comparison: 'vs 7 dias anteriores' }}
             >
               <ComfortBar size="kpi" within={93.2} below={5} above={1.8} coverage={99.1} />
             </Kpi>
@@ -460,7 +459,6 @@ export function Component() {
               value="98,4"
               unit="%"
               context="do horário com leitura válida"
-              change={{ value: -0.3, comparison: 'vs 7 dias anteriores' }}
             />
           </div>
         </Section>

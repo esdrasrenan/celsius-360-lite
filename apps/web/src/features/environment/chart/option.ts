@@ -47,10 +47,25 @@ export function plotBottom(model: Pick<ChartModel, 'from' | 'to'>): number {
   return hasBrush(model) ? BOTTOM_WITH_BRUSH : BOTTOM
 }
 
+/** Intervalo visível do eixo X, em ms. */
+export type View = readonly [number, number]
+
 /** Menor janela de zoom: 2 h em 24 horas, 12 h em 7 dias e 1 dia em 30 dias. */
 export function minZoomSpan(model: Pick<ChartModel, 'from' | 'to'>): number {
   const days = (model.to - model.from) / DAY_MS
   return days <= 1.5 ? 2 * HOUR_MS : days <= 10 ? 12 * HOUR_MS : DAY_MS
+}
+
+/**
+ * Janela do zoom quando o tempo real anda o período (seção 5.9): continua no mesmo intervalo
+ * absoluto, para o trecho que o usuário inspeciona não sair da tela, e só acompanha o "agora"
+ * quando já estava encostada no fim. Nunca sai do novo período e mantém a largura.
+ */
+export function followView(view: View, before: View, after: View): View {
+  const span = Math.min(view[1] - view[0], after[1] - after[0])
+  const atEnd = view[1] >= before[1] - (before[1] - before[0]) * 0.005
+  const first = atEnd ? after[1] - span : Math.min(Math.max(view[0], after[0]), after[1] - span)
+  return [first, first + span]
 }
 
 /**
@@ -122,8 +137,7 @@ export interface OptionInput {
   timeZone: string
   plotWidth: number
   /** Janela visível, para as marcas do eixo X. */
-  view: readonly [number, number]
-  summary: string
+  view: View
   /** Rótulos da borda direita que cabem sem se tocar. */
   edge: EdgeLabels
   /** Animação de dados (troca de período) ou nenhuma (carga e tempo real). */
@@ -133,13 +147,7 @@ export interface OptionInput {
 }
 
 /** Eixos X dos dois grids para a janela visível. Vai inteiro no setOption do zoom. */
-export function xAxes(
-  model: ChartModel,
-  theme: ChartTheme,
-  timeZone: string,
-  plotWidth: number,
-  view: readonly [number, number],
-) {
+export function xAxes(model: ChartModel, theme: ChartTheme, timeZone: string, plotWidth: number, view: View) {
   const { tokens } = theme
   const ticks = axisTicks(view[0], view[1], timeZone, plotWidth)
   const common = { type: 'time', min: model.from, max: model.to } as const
@@ -230,7 +238,6 @@ export function buildOption(input: OptionInput): ChartOption {
     nowLayer(model, theme, timeZone, input.edge.pill),
     situationStripLayer(model, theme, input.formatStripTooltip),
   ].filter((item) => item != null)
-  const temperatureIndex = series.findIndex((item) => item.id === 'temperature')
 
   const dataZoom: DataZoomComponentOption[] = [
     {
@@ -282,7 +289,8 @@ export function buildOption(input: OptionInput): ChartOption {
     animationDurationUpdate: 250,
     animationEasingUpdate: 'cubicOut',
     textStyle: { fontFamily: tokens.fontFamily, fontSize: 12, color: tokens.eixo },
-    aria: { enabled: true, label: { description: input.summary } },
+    // O resumo vai no aria-describedby da figura: o rótulo do ECharts o repetiria num img
+    aria: { enabled: true, label: { enabled: false } },
     legend: {
       show: false,
       data: Object.values(SERIES_NAME),
@@ -342,7 +350,7 @@ export function buildOption(input: OptionInput): ChartOption {
         axisPointer: { show: false },
       },
     ],
-    visualMap: temperatureVisualMap(model, theme, temperatureIndex),
+    visualMap: temperatureVisualMap(model, theme),
     tooltip: {
       trigger: 'axis',
       // Fica dentro do contêiner do gráfico, preso a ele (seção 5.3 pede appendTo: body): no

@@ -259,7 +259,10 @@ export function spreadLayers(model: ChartModel, theme: ChartTheme): LineSeriesOp
   ]
 }
 
-/** 5. Período anterior (Comparar): instantes deslocados em +P, tracejado curto. */
+/**
+ * 5. Período anterior (Comparar): instantes deslocados em +P, tracejado curto de 1,5 px num azul
+ * próprio, para não se confundir com o cinza da loja fechada nem com a Externa.
+ */
 export function previousLayer(model: ChartModel, theme: ChartTheme): LineSeriesOption | null {
   if (!model.previous) return null
   return {
@@ -270,7 +273,7 @@ export function previousLayer(model: ChartModel, theme: ChartTheme): LineSeriesO
     symbol: 'none',
     connectNulls: false,
     z: Z.previous,
-    lineStyle: { color: theme.tokens.comparacao, width: 1.25, type: [2, 3] },
+    lineStyle: { color: theme.tokens.comparacao, width: 1.5, type: [2, 3] },
     itemStyle: { color: theme.tokens.comparacao },
     emphasis,
     blur: blurLine,
@@ -307,18 +310,29 @@ export function outdoorLayer(
   }
 }
 
+export const TEMPERATURE_ID = 'temperature'
+
 /**
  * 7 e 8. Temperatura em duas séries com o mesmo nome (a legenda liga e desliga as duas): fora do
- * expediente, cinza e mais fina; dentro, colorida pela faixa via visualMap. A de fora repete os
- * pontos de fronteira para as duas linhas se encontrarem.
+ * expediente, cinza e mais fina; dentro, colorida pela faixa via visualMap. Cada ponto fica no
+ * início do bucket, então o trecho entre dois pontos é do bucket da esquerda: cada série leva
+ * também o ponto seguinte ao seu último bucket, e as duas linhas se encontram na fronteira.
  */
 export function temperatureLayers(model: ChartModel, theme: ChartTheme): LineSeriesOption[] {
   const { points } = model
   const { tokens } = theme
   const closed = points.map((point, index) => {
-    const touches = !point.open || points[index - 1]?.open === false || points[index + 1]?.open === false
+    const touches = !point.open || points[index - 1]?.open === false
     return [point.t, touches ? point.avg : null]
   })
+  // O primeiro bucket fechado só fecha o trecho colorido: sem símbolo, o hover nele não ganha cor
+  const open = points.map((point, index) =>
+    point.open
+      ? [point.t, point.avg]
+      : points[index - 1]?.open
+        ? { value: [point.t, point.avg], symbol: 'none' }
+        : [point.t, null],
+  )
   return [
     {
       id: 'temperature-closed',
@@ -336,10 +350,10 @@ export function temperatureLayers(model: ChartModel, theme: ChartTheme): LineSer
       blur: blurLine,
     },
     {
-      id: 'temperature',
+      id: TEMPERATURE_ID,
       name: SERIES_NAME.temperature,
       type: 'line',
-      data: points.map((point) => [point.t, point.open ? point.avg : null]),
+      data: open,
       symbol: 'circle',
       symbolSize: 8,
       showSymbol: false,
@@ -353,19 +367,19 @@ export function temperatureLayers(model: ChartModel, theme: ChartTheme): LineSer
   ]
 }
 
-/** Cor da linha por faixa, só na série "Temperatura" do expediente. */
-export function temperatureVisualMap(
-  model: ChartModel,
-  theme: ChartTheme,
-  seriesIndex: number,
-): VisualMapComponentOption {
+/**
+ * Cor da linha por faixa, só na série "Temperatura" do expediente. Aponta pelo id: com
+ * replaceMerge, o ECharts preserva o índice de cada série casada e põe as novas no fim, então a
+ * posição no array montado não é o índice real.
+ */
+export function temperatureVisualMap(model: ChartModel, theme: ChartTheme): VisualMapComponentOption {
   const { min, max } = model.range
   const { tokens } = theme
   return {
     type: 'piecewise',
     show: false,
     dimension: 1,
-    seriesIndex,
+    seriesId: TEMPERATURE_ID,
     pieces: [
       { lt: min, color: tokens.abaixo },
       { gte: min, lte: max, color: tokens.temperatura },

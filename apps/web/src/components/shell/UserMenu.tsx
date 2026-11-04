@@ -67,7 +67,7 @@ export function UserMenu({
           >
             {initials(user.name)}
           </span>
-          <span className="hidden max-w-40 truncate font-medium text-apoio text-texto md:block">
+          <span className="hidden max-w-40 truncate font-medium text-apoio text-texto lg:block">
             {user.name}
           </span>
           <Icon icon={ArrowDown01Icon} size={12} />
