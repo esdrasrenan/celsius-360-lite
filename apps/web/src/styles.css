@@ -2,138 +2,537 @@
 @import "@fontsource-variable/inter";
 @import "@fontsource-variable/fira-code";
 
-/*
- * Identidade da Diel Energia: cores do símbolo oficial (tinta, índigo e o degradê ciano → celsius)
- * e as fontes do site institucional (Inter e Fira Code). Tokens herdados da proposta de site da Diel.
- */
+/* =========================================================================
+   1. Primitivas. Só este arquivo e lib/chart-theme.ts as leem.
+   ========================================================================= */
 :root {
-  --gelo: #f4f7fb;
-  --gelo-2: #e9eff7;
-  --branco: #ffffff;
-  --tinta: #0b0c59;
-  --tinta-2: #383c76;
-  --tinta-3: #5f6490;
-  --linha: rgb(11 12 89 / 0.1);
-  --linha-forte: rgb(11 12 89 / 0.2);
-  --indigo: #2a2f86;
-  --celsius: #363bc4;
-  --celsius-escuro: #2a2fa3;
-  --ciano: #00b9ce;
-  --ciano-claro: #8ee8f2;
-  --noite: #080a46;
-  --noite-2: #10136a;
-  --claro-2: #c4c9ec;
-  --claro-3: #9aa0d4;
-  --calor: #e5552e;
+  /* Marca Diel (símbolo oficial) */
+  --p-tinta: #0b0c59;
+  --p-indigo: #2a2f86;
+  --p-celsius: #363bc4;
+  --p-celsius-escuro: #2a2fa3;
+  --p-ciano: #00b9ce; /* 2,38:1 no branco: só preenchimento e degradê */
+  --p-ciano-claro: #8ee8f2; /* 13,11:1 sobre noite */
+  --p-noite: #080a46;
+  --p-noite-2: #10136a;
+  --p-claro-2: #c4c9ec; /* 10,66:1 sobre tinta */
+  --p-claro-3: #9aa0d4; /* 7,31:1 sobre noite */
 
-  /* Estados (função, não marca) */
-  --ok: #0f9d6b;
-  --alerta: #c77700;
-  --falha: #d6364b;
-  --neutro: #8a90b4;
-  --frio: #363bc4;
+  /* Neutros puxados para a tinta */
+  --p-n0: #ffffff;
+  --p-n25: #f9fafd;
+  --p-n50: #f4f7fb; /* gelo */
+  --p-n100: #eef1f7;
+  --p-n150: #e9eff7; /* gelo-2 */
+  --p-n200: #dde2ed;
+  --p-n300: #c5cadf;
+  --p-n500: #8489ab; /* borda de controle: 3,42:1 branco, 3,18:1 gelo */
+  --p-n550: #737899; /* segmento "na faixa": 4,31:1 branco, 3,72:1 trilho */
+  --p-n600: #5f6490; /* texto 3: 5,66 branco, 5,26 gelo, 4,89 gelo-2 */
+  --p-n700: #4f547f;
+  --p-n800: #383c76; /* texto 2: 10,12 */
+  --p-n900: #0b0c59; /* texto: 17,34 */
+
+  --degrade-marca: linear-gradient(100deg, var(--p-ciano) 0%, var(--p-celsius) 70%);
+
+  /* Gráfico: lidos por lib/chart-theme.ts via getComputedStyle */
+  --grafico-temperatura: #0b0c59;
+  --grafico-acima: #e5552e;
+  --grafico-abaixo: #1f7ccc;
+  --grafico-fora-horario: #a2a6c2; /* trecho com a loja fechada, 1,25 px */
+  --grafico-variacao: rgb(54 59 196 / 0.12); /* banda mín–máx */
+  --grafico-externa: #6e7398; /* 4,60:1, tracejada */
+  --grafico-comparacao: rgb(11 12 89 / 0.4);
+  --grafico-faixa: rgb(0 185 206 / 0.1);
+  --grafico-faixa-borda: #0a8796; /* 4,27:1 */
+  --grafico-faixa-texto: #00707d; /* 5,81:1 */
+  --grafico-fechado: rgb(11 12 89 / 0.035);
+  --grafico-sem-dados: #8489ab; /* traço da hachura ↗ */
+  --grafico-descartada: #c77700; /* traço da hachura ↘ */
+  --grafico-descartada-fundo: #fdf2df; /* fundo da hachura ↘ (alerta-fundo) */
+  --grafico-grade: rgb(11 12 89 / 0.07);
+  --grafico-eixo: #5f6490;
+  --grafico-cursor: rgb(11 12 89 / 0.35);
+  --grafico-zoom: rgb(54 59 196 / 0.08);
+  --grafico-superficie: #ffffff;
+  --grafico-pilula: #0b0c59; /* pílula de data no eixo X */
+  --grafico-na-faixa: var(--p-n550); /* tira de situação */
+  --grafico-acento: var(--p-celsius); /* brush selecionado */
+  --grafico-trilho: var(--p-n150); /* fundo do brush */
+  --grafico-alca: var(--p-n500); /* borda da alça do brush */
+
+  /* Movimento */
+  --dur-instantanea: 100ms; /* hover, saída de popover */
+  --dur-rapida: 150ms; /* pressionar, entrada de popover e select */
+  --dur-media: 200ms; /* chevron, gaveta */
+  --dur-dados: 250ms; /* atualização de dados no gráfico */
+  --atraso-dica: 300ms;
 }
 
+/* =========================================================================
+   2. Zera as escalas padrão do Tailwind. Fora dos tokens, nada existe.
+   ========================================================================= */
+@theme {
+  --color-*: initial;
+  --text-*: initial;
+  --font-*: initial;
+  --font-weight-*: initial;
+  --radius-*: initial;
+  --shadow-*: initial;
+  --container-*: initial;
+}
+
+/* =========================================================================
+   3. Semânticas. Os componentes usam só estas.
+   ========================================================================= */
 @theme inline {
-  --color-gelo: var(--gelo);
-  --color-gelo-2: var(--gelo-2);
-  --color-branco: var(--branco);
-  --color-tinta: var(--tinta);
-  --color-tinta-2: var(--tinta-2);
-  --color-tinta-3: var(--tinta-3);
-  --color-linha: var(--linha);
-  --color-linha-forte: var(--linha-forte);
-  --color-indigo: var(--indigo);
-  --color-celsius: var(--celsius);
-  --color-celsius-escuro: var(--celsius-escuro);
-  --color-ciano: var(--ciano);
-  --color-ciano-claro: var(--ciano-claro);
-  --color-noite: var(--noite);
-  --color-noite-2: var(--noite-2);
-  --color-claro-2: var(--claro-2);
-  --color-claro-3: var(--claro-3);
-  --color-calor: var(--calor);
-  --color-ok: var(--ok);
-  --color-alerta: var(--alerta);
-  --color-falha: var(--falha);
-  --color-neutro: var(--neutro);
-  --color-frio: var(--frio);
+  /* Superfícies */
+  --color-fundo: var(--p-n50);
+  --color-superficie: var(--p-n0);
+  --color-superficie-2: var(--p-n25); /* linha de loja, cabeçalho de tabela */
+  --color-superficie-3: var(--p-n150); /* trilho, segmentado, skeleton */
+  --color-inverso: var(--p-tinta); /* dica, botão primário, página atual */
+  --color-realce: rgb(11 12 89 / 0.04); /* hover de linha e de item */
+  --color-pressionado: rgb(11 12 89 / 0.07);
+  --color-selecionado: rgb(54 59 196 / 0.08);
+
+  /* Texto */
+  --color-texto: var(--p-n900);
+  --color-texto-2: var(--p-n800);
+  --color-texto-3: var(--p-n600);
+  --color-texto-inverso: var(--p-n0);
+  --color-texto-inverso-2: var(--p-claro-2);
+  --color-texto-inverso-3: var(--p-claro-3);
+
+  /* Bordas */
+  --color-borda: rgb(11 12 89 / 0.08); /* divisória, decorativa */
+  --color-borda-forte: rgb(11 12 89 / 0.14); /* separador de grupo, chip */
+  --color-borda-controle: var(--p-n500); /* input, select, segmentado (WCAG 1.4.11) */
+  --color-borda-controle-hover: var(--p-n700);
+
+  /* Acento = interação: link, seleção, foco, zoom. Nunca estado. */
+  --color-acento: var(--p-celsius); /* 8,14:1 */
+  --color-acento-hover: var(--p-celsius-escuro);
+  --color-acento-fundo: #ebebf9; /* acento sobre ele: 6,89:1 */
+  --color-foco: var(--p-celsius);
+
+  /* Estados: sólido (ponto, barra, ícone) · texto · fundo · borda */
+  --color-ok: #0f9d6b;
+  --color-ok-texto: #0b7550;
+  --color-ok-fundo: #e6f5ee;
+  --color-ok-borda: #b5e2cf;
+  --color-alerta: #c77700;
+  --color-alerta-texto: #8f5300;
+  --color-alerta-fundo: #fdf2df;
+  --color-alerta-borda: #f2d29c;
+  --color-falha: #b8233f;
+  --color-falha-texto: #a11d38;
+  --color-falha-fundo: #fbeaed;
+  --color-falha-borda: #f2c3cc;
+  --color-neutro: #7c82a6;
+  --color-neutro-texto: #4f547f;
+  --color-neutro-fundo: #eef1f7;
+  --color-neutro-borda: #d6dae8;
+  --color-quente: #e5552e;
+  --color-quente-texto: #b23b16;
+  --color-quente-fundo: #fdeee8;
+  --color-quente-borda: #f6c8b8;
+  --color-frio: #1f7ccc;
+  --color-frio-texto: #145f9e;
+  --color-frio-fundo: #e8f2fb;
+  --color-frio-borda: #bcd8f1;
+  --color-na-faixa: var(--p-n550); /* segmento neutro da barra de conforto */
+
+  /* Faixa de conforto (ciano da marca) fora do canvas: legenda, swatch, rótulo */
+  --color-faixa: var(--p-ciano);
+  --color-faixa-borda: #0a8796;
+  --color-faixa-texto: #00707d;
+
+  /* Marca: login, logotipo, assinaturas (seção 1.8) */
+  --color-marca-noite: var(--p-noite);
+  --color-marca-noite-2: var(--p-noite-2);
+  --color-marca-indigo: var(--p-indigo);
+  --color-marca-ciano: var(--p-ciano);
+  --color-marca-ciano-claro: var(--p-ciano-claro);
+}
+
+/* =========================================================================
+   4. Tipografia, raios, sombras, medidas
+   ========================================================================= */
+@theme {
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Fira Code Variable", ui-monospace, monospace;
-  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-}
 
-html {
-  color-scheme: light;
-}
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
 
-body {
-  background: var(--gelo);
-  color: var(--tinta-2);
-  font-family: var(--font-sans);
-  font-feature-settings: "cv11", "ss01";
-  -webkit-font-smoothing: antialiased;
-}
+  --text-legenda: 0.75rem; /* 12/16 */
+  --text-legenda--line-height: 1rem;
+  --text-apoio: 0.8125rem; /* 13/18 */
+  --text-apoio--line-height: 1.125rem;
+  --text-corpo: 0.875rem; /* 14/20 */
+  --text-corpo--line-height: 1.25rem;
+  --text-corpo-lg: 1rem; /* 16/24 */
+  --text-corpo-lg--line-height: 1.5rem;
+  --text-titulo-3: 1rem;
+  --text-titulo-3--line-height: 1.375rem;
+  --text-titulo-3--font-weight: 600;
+  --text-titulo-3--letter-spacing: -0.01em;
+  --text-titulo-2: 1.25rem;
+  --text-titulo-2--line-height: 1.75rem;
+  --text-titulo-2--font-weight: 600;
+  --text-titulo-2--letter-spacing: -0.015em;
+  --text-titulo-1: 1.5rem;
+  --text-titulo-1--line-height: 2rem;
+  --text-titulo-1--font-weight: 600;
+  --text-titulo-1--letter-spacing: -0.02em;
+  --text-kpi: 1.75rem;
+  --text-kpi--line-height: 2rem;
+  --text-kpi--font-weight: 600;
+  --text-kpi--letter-spacing: -0.02em;
+  --text-destaque: 2.5rem;
+  --text-destaque--line-height: 2.75rem;
+  --text-destaque--font-weight: 600;
+  --text-destaque--letter-spacing: -0.025em;
+  --text-display: clamp(2.25rem, 1.6rem + 1.6vw, 2.75rem); /* só a manchete do login */
+  --text-display--line-height: 1.05;
+  --text-display--font-weight: 600;
+  --text-display--letter-spacing: -0.035em;
 
-::selection {
-  background: rgb(54 59 196 / 0.18);
-}
+  /* Raios. O interno é o externo menos o padding. Botão = 22% da altura (36 → 8), regra da marca. */
+  --radius-xs: 4px; /* barra, célula de heatmap, swatch, <mark>, <kbd> */
+  --radius-sm: 6px; /* segmento interno (8 − 2), chip, botão de página */
+  --radius-md: 8px; /* input, select, botão, item de popover (12 − 4) */
+  --radius-lg: 12px; /* popover, tooltip do gráfico, gaveta */
+  --radius-xl: 20px; /* cartão e tabela: raio da proposta de site da Diel */
+  --radius-full: 9999px;
 
-:focus-visible {
-  outline: 2px solid var(--celsius);
-  outline-offset: 3px;
-}
+  /* Sombras tingidas de tinta, nunca preto */
+  --shadow-cartao:
+    0 0 0 1px rgb(11 12 89 / 0.07), 0 1px 2px rgb(11 12 89 / 0.04), 0 4px 12px -6px rgb(11 12 89 / 0.08);
+  --shadow-cartao-hover:
+    0 0 0 1px rgb(11 12 89 / 0.1), 0 2px 4px rgb(11 12 89 / 0.05), 0 10px 24px -10px rgb(11 12 89 / 0.16);
+  --shadow-controle: 0 1px 2px rgb(11 12 89 / 0.05);
+  --shadow-segmento: 0 0 0 1px rgb(11 12 89 / 0.06), 0 1px 2px rgb(11 12 89 / 0.1);
+  --shadow-flutuante:
+    0 0 0 1px rgb(11 12 89 / 0.08), 0 4px 8px -2px rgb(11 12 89 / 0.08), 0 16px 32px -8px rgb(11 12 89 / 0.16);
+  --shadow-dica: 0 4px 12px -2px rgb(8 10 70 / 0.28);
 
-@utility t-titulo {
-  color: var(--tinta);
-  font-weight: 600;
-  letter-spacing: -0.03em;
-  text-wrap: balance;
-}
+  /* Larguras máximas: max-w-* */
+  --container-conteudo: 80rem; /* 1280: contêiner das telas */
+  --container-texto: 40rem; /* texto corrido de estado vazio */
+  --container-dica: 15rem; /* bolha de dica */
+  --container-definicao: 18rem; /* popover de definição de KPI */
+  --container-popover: 20rem; /* popup de select e combobox */
+  --container-formulario: 24rem; /* coluna do login */
+  --container-manchete: 32rem; /* manchete do painel do login */
+  --container-gaveta: 32rem; /* gaveta inferior a partir de sm */
 
-@utility t-rotulo {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
+  /* Medidas nomeadas: h-controle, top-cabecalho, min-h-kpi... (o resto usa a grade de 4 px) */
+  --spacing-cabecalho: 3.5rem; /* 56 */
+  --spacing-controle: 2.25rem; /* 36: busca, select, segmentado, botão */
+  --spacing-controle-sm: 2rem; /* 32: pílula, botão de página */
+  --spacing-controle-toque: 2.75rem; /* 44: pointer-coarse */
+  --spacing-linha-loja: 3.5rem; /* 56 */
+  --spacing-linha-ambiente: 2.75rem; /* 44 */
+  --spacing-cabecalho-tabela: 2.25rem;
+  --spacing-kpi: 7.5rem; /* altura mínima do cartão de KPI */
+  --spacing-grafico: 20rem; /* 320 */
+  --spacing-grafico-movel: 15rem; /* 240 */
 
-@utility t-numero {
-  color: var(--tinta);
-  font-weight: 600;
-  letter-spacing: -0.04em;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
+  --ease-saida: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-movimento: cubic-bezier(0.77, 0, 0.175, 1);
 
-@utility texto-degrade {
-  background: linear-gradient(100deg, var(--ciano) 0%, var(--celsius) 70%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-
-@utility cartao {
-  background: var(--branco);
-  border-radius: 22px;
-  box-shadow: 0 0 0 1px var(--linha);
-}
-
-@utility pressionavel {
-  transition: transform 160ms var(--ease-out);
-  &:active {
-    transform: scale(0.97);
+  /* Barra indeterminada de recarga (seção 3.13) */
+  --animate-progresso: progresso 1.4s var(--ease-movimento) infinite;
+  @keyframes progresso {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(300%);
+    }
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    /* biome-ignore lint/complexity/noImportantStyles: precisa vencer qualquer animação para respeitar a preferência */
-    animation-duration: 0.01ms !important;
-    /* biome-ignore lint/complexity/noImportantStyles: idem */
-    transition-duration: 0.01ms !important;
+/* Hover só com ponteiro fino (seção 1.7): no toque, o hover "gruda" depois do tap. */
+@custom-variant hover {
+  @media (hover: hover) and (pointer: fine) {
+    &:hover {
+      @slot;
+    }
+  }
+}
+
+/* =========================================================================
+   5. Base
+   ========================================================================= */
+@layer base {
+  html {
+    color-scheme: light;
+    -webkit-text-size-adjust: 100%;
+    scroll-padding-top: calc(var(--spacing-cabecalho) + var(--spacing-cabecalho-tabela) + 8px);
+  }
+  body {
+    background: var(--color-fundo);
+    color: var(--color-texto-2);
+    font-family: var(--font-sans);
+    font-size: var(--text-corpo);
+    line-height: var(--text-corpo--line-height);
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Dentro de @layer base: um anel só, que o outline-none de um utilitário consegue anular. */
+  :focus-visible {
+    outline: 2px solid var(--color-foco);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: rgb(54 59 196 / 0.18);
+    color: var(--color-texto);
+  }
+  input[type="search"]::-webkit-search-cancel-button,
+  input[type="search"]::-webkit-search-decoration {
+    appearance: none;
+  }
+  mark {
+    background: var(--color-acento-fundo);
+    color: var(--color-texto);
+    border-radius: var(--radius-xs);
+    /* O respiro não desloca o texto: num trecho dentro da palavra ("Vi|são|") não abre buraco */
+    padding-inline: 2px;
+    margin-inline: -2px;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+}
+
+/* =========================================================================
+   6. Utilitários nomeados
+   ========================================================================= */
+@utility num {
+  font-variant-numeric: tabular-nums;
+}
+@utility id-tecnico {
+  font-family: var(--font-mono);
+  font-size: var(--text-legenda);
+  line-height: var(--text-legenda--line-height);
+  color: var(--color-texto-3);
+}
+@utility foco-interno {
+  &:focus-visible {
+    outline-offset: -2px;
+  }
+}
+@utility so-leitor {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+@utility cartao {
+  background: var(--color-superficie);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-cartao);
+}
+@utility grade-item-menu {
+  display: grid;
+  grid-template-columns: 1rem minmax(0, 1fr) auto;
+  align-items: center;
+}
+@utility grade-tooltip {
+  display: grid;
+  grid-template-columns: 0.625rem minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 0.5rem;
+  row-gap: 0.25rem;
+}
+@utility largura-popover {
+  min-width: var(--anchor-width);
+  max-width: min(var(--container-popover), calc(100vw - 2rem));
+  max-height: min(20rem, var(--available-height));
+}
+@utility pressionavel {
+  transition:
+    transform var(--dur-rapida) var(--ease-saida),
+    background-color var(--dur-instantanea) linear,
+    color var(--dur-instantanea) linear,
+    box-shadow var(--dur-instantanea) linear;
+  @media (prefers-reduced-motion: no-preference) {
+    &:active:not(:disabled, [aria-disabled="true"]) {
+      transform: scale(0.97);
+    }
+  }
+}
+/* Entrada e saída de popover, select e menu (seção 1.7) */
+@utility animacao-popover {
+  transform-origin: var(--transform-origin);
+  transition:
+    opacity var(--dur-rapida) var(--ease-saida),
+    transform var(--dur-rapida) var(--ease-saida);
+  &[data-starting-style] {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.97);
+  }
+  &[data-side="top"][data-starting-style] {
+    transform: translateY(2px) scale(0.97);
+  }
+  &[data-ending-style] {
+    opacity: 0;
+    transition: opacity var(--dur-instantanea) var(--ease-saida);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    &[data-starting-style],
+    &[data-side="top"][data-starting-style] {
+      transform: none;
+    }
+  }
+}
+@utility animacao-dica {
+  transform-origin: var(--transform-origin);
+  transition:
+    opacity 125ms var(--ease-saida),
+    transform 125ms var(--ease-saida);
+  &[data-starting-style] {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  &[data-ending-style] {
+    opacity: 0;
+    transition: opacity 75ms var(--ease-saida);
+  }
+  &[data-instant] {
+    transition: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    &[data-starting-style] {
+      transform: none;
+    }
+  }
+}
+/* Seta da dica: triângulo de 8×4 que acompanha o lado em que a bolha abriu */
+@utility seta-dica {
+  display: flex;
+  width: 8px;
+  height: 4px;
+  color: var(--color-inverso);
+  &[data-side="top"] {
+    bottom: -4px;
+  }
+  &[data-side="bottom"] {
+    top: -4px;
+    rotate: 180deg;
+  }
+  &[data-side="left"] {
+    right: -6px;
+    rotate: -90deg;
+  }
+  &[data-side="right"] {
+    left: -6px;
+    rotate: 90deg;
+  }
+}
+/* Gaveta inferior do celular (filtros): 200 ms, ease-movimento, translateY */
+@utility gaveta-inferior {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  margin-inline: auto;
+  max-width: var(--container-gaveta);
+  max-height: 85dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-superficie);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: var(--shadow-flutuante);
+  padding-bottom: env(safe-area-inset-bottom);
+  transition: transform var(--dur-media) var(--ease-movimento);
+  &[data-starting-style],
+  &[data-ending-style] {
+    transform: translateY(100%);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    transition: opacity var(--dur-media) linear;
+    &[data-starting-style],
+    &[data-ending-style] {
+      transform: none;
+      opacity: 0;
+    }
+  }
+}
+/* Assinaturas da marca (seção 1.8) */
+@utility barra-topo-marca {
+  position: relative;
+  overflow: hidden;
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto;
+    height: 3px;
+    background: var(--degrade-marca);
+  }
+}
+@utility traco-marca {
+  background: var(--degrade-marca);
+}
+@utility fundo-login {
+  background:
+    radial-gradient(120% 80% at 0% 100%, rgb(0 185 206 / 0.28), transparent 60%),
+    radial-gradient(90% 70% at 100% 0%, rgb(54 59 196 / 0.45), transparent 60%), var(--p-noite);
+}
+@utility hachura-sem-dados {
+  background:
+    repeating-linear-gradient(45deg, var(--grafico-sem-dados) 0 1px, transparent 1px 6px),
+    var(--color-superficie);
+}
+@utility hachura-descartada {
+  background:
+    repeating-linear-gradient(-45deg, var(--grafico-descartada) 0 1.5px, transparent 1.5px 6px),
+    var(--color-alerta-fundo);
+}
+
+/* =========================================================================
+   7. Impressão ("Imprimir ou salvar PDF" do detalhe). Fora de camada: vence os utilitários.
+   ========================================================================= */
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+  html,
+  body {
+    background: var(--p-n0);
+  }
+  body {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  * {
+    --tw-shadow: 0 0 transparent;
+    backdrop-filter: none;
+  }
+  .nao-imprimir {
+    display: none;
+  }
+  .cartao {
+    box-shadow: none;
+    outline: 1px solid var(--color-borda-forte);
+    outline-offset: -1px;
+    break-inside: avoid;
+  }
+  .sticky {
+    position: static;
   }
 }
