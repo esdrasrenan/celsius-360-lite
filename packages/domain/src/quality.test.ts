@@ -62,7 +62,7 @@ describe('StuckDetector', () => {
   test('marca a sequência inteira quando o valor fica idêntico por 60 minutos', () => {
     const detector = new StuckDetector()
     const samples = series(0, 61, 22.8)
-    expect(detector.observe('IOT014', samples)).toBeNull()
+    expect(detector.observe('IOT014', samples)).toEqual({ startTs: 0, retro: null, validBefore: null })
     expect(samples.every((sample) => sample.quality === Quality.Stuck)).toBe(true)
   })
 
@@ -71,8 +71,8 @@ describe('StuckDetector', () => {
     const first = series(0, 40, 23.2)
     const second = series(40 * minute, 30, 23.2)
     expect(detector.observe('IOT009', first)).toBeNull()
-    const retro = detector.observe('IOT009', second)
-    expect(retro).toEqual({ deviceId: 'IOT009', from: 0, to: 40 * minute - 1, value: 23.2 })
+    const detection = detector.observe('IOT009', second)
+    expect(detection?.retro).toEqual({ deviceId: 'IOT009', from: 0, to: 40 * minute - 1, value: 23.2 })
     expect(second.every((sample) => sample.quality === Quality.Stuck)).toBe(true)
   })
 
@@ -96,8 +96,27 @@ describe('StuckDetector', () => {
     const first = series(0, 40, 22)
     detector.observe('IOT001', first)
     detector.observe('IOT001', series(30 * minute, 5, 22))
-    const retro = detector.observe('IOT001', series(40 * minute, 25, 22))
-    expect(retro?.from).toBe(0)
+    const detection = detector.observe('IOT001', series(40 * minute, 25, 22))
+    expect(detection?.retro?.from).toBe(0)
+  })
+
+  test('devolve a última leitura válida antes da sequência travada', () => {
+    const detector = new StuckDetector()
+    detector.observe('IOT014', series(0, 10, 23.1))
+    detector.observe('IOT014', series(10 * minute, 40, 22.8))
+    const detection = detector.observe('IOT014', series(50 * minute, 25, 22.8))
+    expect(detection?.startTs).toBe(10 * minute)
+    expect(detection?.validBefore).toEqual({ ts: 10 * minute - 30_000, value: 23.1 })
+  })
+
+  test('depois de um episódio travado, a leitura válida anterior continua sendo a de antes dele', () => {
+    const detector = new StuckDetector()
+    detector.observe('IOT014', series(0, 5, 23.1))
+    detector.observe('IOT014', series(5 * minute, 70, 22.8))
+    // a sequência muda de valor e trava de novo sem nenhuma leitura válida no meio
+    detector.observe('IOT014', series(75 * minute, 40, 22.9))
+    const detection = detector.observe('IOT014', series(115 * minute, 25, 22.9))
+    expect(detection?.validBefore).toEqual({ ts: 5 * minute - 30_000, value: 23.1 })
   })
 
   test('ao restaurar uma sequência já marcada, continua marcando sem remarcar o passado', () => {

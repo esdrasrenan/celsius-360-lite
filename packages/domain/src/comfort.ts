@@ -15,6 +15,9 @@ export function comfortLevel(value: number, range: ComfortRange): ComfortLevel {
 /** Meta de conforto: abaixo dela o ambiente aparece como ponto de atenção na visão da rede. */
 export const COMFORT_TARGET_PCT = 90
 
+/** Abaixo deste conforto o ambiente é crítico (tom de alerta forte na interface). */
+export const COMFORT_CRITICAL_PCT = 70
+
 /** Intervalo nominal entre amostras, usado para estimar quantas amostras eram esperadas no horário. */
 export const EXPECTED_SAMPLING_MS = 30_000
 

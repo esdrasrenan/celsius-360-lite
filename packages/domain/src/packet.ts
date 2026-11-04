@@ -16,6 +16,9 @@ export type TelemetryPacket = z.infer<typeof telemetryPacketSchema>
 
 export type ParseError = 'json_invalido' | 'esquema_invalido' | 'timestamp_invalido'
 
+/** Motivo gravado no cru quando o pacote não entra na série. */
+export type RejectReason = ParseError | 'timestamp_futuro'
+
 export type ParsedLine =
   | { ok: true; packet: TelemetryPacket; sentAt: number }
   | { ok: false; error: ParseError; deviceId: string | null }
@@ -59,4 +62,51 @@ export function expandSamples(packet: TelemetryPacket, sentAt: number): Sample[]
   const count = packet.Temperature.length
   const stepMs = packet.samplingTime * 1000
   return packet.Temperature.map((value, index) => ({ ts: sentAt - (count - 1 - index) * stepMs, value }))
+}
+
+/** Quanto um pacote pode estar à frente do "agora" sem que outro dispositivo confirme o horário. */
+export const CLOCK_TOLERANCE_MS = 10 * 60_000
+
+/**
+ * "Agora" da ingestão: o horário mais recente dos dispositivos cadastrados, protegido contra relógio
+ * adiantado (GMT errado, RTC desregulado). Um pacote até 10 min à frente do agora é aceito e o avança.
+ * Um salto maior só vale quando outro dispositivo cadastrado já informou um horário a até 10 min do
+ * pacote, como acontece quando a frota inteira volta de uma interrupção. Sem confirmação, o pacote é
+ * recusado e não move o agora, mas o horário dele fica registrado e pode confirmar o de outro.
+ * Com um único dispositivo cadastrado não há quem confirme, e vale o maior horário.
+ *
+ * Antes do primeiro agora não há referência: nada é recusado, e o agora começa no primeiro horário
+ * confirmado por outro dispositivo (ou pelo próprio, no pacote seguinte, se ele é o único a enviar).
+ */
+export class FleetClock {
+  /** Maior horário informado por cada dispositivo, aceito ou não */
+  private readonly reported = new Map<string, number>()
+
+  constructor(
+    private readonly fleetSize: number,
+    private current: number | null = null,
+    reported: Iterable<readonly [string, number]> = [],
+  ) {
+    for (const [deviceId, at] of reported) this.reported.set(deviceId, at)
+  }
+
+  get now(): number | null {
+    return this.current
+  }
+
+  /** Registra o horário do pacote e diz se ele entra na série. */
+  accept(deviceId: string, sentAt: number): boolean {
+    const confirmed = this.confirmed(deviceId, sentAt)
+    this.reported.set(deviceId, Math.max(this.reported.get(deviceId) ?? sentAt, sentAt))
+    if (confirmed) this.current = Math.max(this.current ?? sentAt, sentAt)
+    return confirmed || this.current === null
+  }
+
+  private confirmed(deviceId: string, sentAt: number): boolean {
+    if (this.fleetSize <= 1) return true
+    if (this.current !== null && sentAt <= this.current + CLOCK_TOLERANCE_MS) return true
+    const near = (at: number | undefined) => at !== undefined && Math.abs(at - sentAt) <= CLOCK_TOLERANCE_MS
+    for (const [other, at] of this.reported) if (other !== deviceId && near(at)) return true
+    return this.current === null && this.reported.size === 1 && near(this.reported.get(deviceId))
+  }
 }

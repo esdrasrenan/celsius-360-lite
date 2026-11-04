@@ -24,7 +24,8 @@ export const PERIODS: Record<
 export const PERIOD_KEYS = Object.keys(PERIODS) as PeriodKey[]
 
 export function isPeriodKey(value: unknown): value is PeriodKey {
-  return typeof value === 'string' && value in PERIODS
+  // `in` aceitaria propriedades herdadas, como "toString"
+  return typeof value === 'string' && Object.hasOwn(PERIODS, value)
 }
 
 /**
@@ -42,6 +43,9 @@ export function periodRange(key: PeriodKey, now: number): { from: number; to: nu
  * Agregação adequada ao intervalo pedido, para o gráfico ter no máximo cerca de mil pontos:
  * até 8 h, amostras de 30 s; até 3,5 dias, 5 min; até 10 dias, 15 min; acima disso, 1 h.
  */
+/** Teto de pontos de uma série com agregação escolhida pelo cliente (bucket explícito). */
+export const MAX_SERIES_POINTS = 5_000
+
 export function chooseBucket(from: number, to: number): Bucket {
   const span = to - from
   if (span <= 8 * HOUR_MS) return 'raw'

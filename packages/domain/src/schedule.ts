@@ -138,3 +138,42 @@ export function openDurationMs(
     0,
   )
 }
+
+/**
+ * Próxima abertura depois de `utcMs`, em UTC. Nulo quando o ambiente já está aberto ou quando o
+ * cadastro não tem nenhum dia de funcionamento. Uma semana e um dia cobrem qualquer horário semanal.
+ */
+export function nextOpenAt(schedule: CompiledSchedule, utcMs: number, timeZone: string): number | null {
+  const [first] = openIntervals(schedule, utcMs, utcMs + 8 * DAY_MS, timeZone)
+  return first && first[0] > utcMs ? first[0] : null
+}
+
+/** A janela do dia (0 = domingo) cobre parte da hora local `hour`, inclusive a sobra do expediente da véspera. */
+export function opensDuringHour(schedule: CompiledSchedule, weekday: number, hour: number): boolean {
+  const start = hour * 60
+  const overlaps = (window: Window | null | undefined, offset: number) =>
+    !!window && window.start < start + offset + 60 && window.end > start + offset
+  return overlaps(schedule[weekday], 0) || overlaps(schedule[(weekday + 6) % 7], 1440)
+}
+
+export interface LocalDay {
+  /** AAAA-MM-DD no fuso informado */
+  day: string
+  from: number
+  to: number
+}
+
+/** Dias locais que tocam [from, to), cada um recortado nas bordas pedidas. */
+export function localDays(fromMs: number, toMs: number, timeZone: string): LocalDay[] {
+  const days: LocalDay[] = []
+  for (let day = Math.floor((fromMs + timeZoneOffsetMs(fromMs, timeZone)) / DAY_MS); ; day++) {
+    const start = localToUtcMs(day * DAY_MS, timeZone)
+    if (start >= toMs) break
+    days.push({
+      day: new Date(day * DAY_MS).toISOString().slice(0, 10),
+      from: Math.max(start, fromMs),
+      to: Math.min(localToUtcMs((day + 1) * DAY_MS, timeZone), toMs),
+    })
+  }
+  return days
+}

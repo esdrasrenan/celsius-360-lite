@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { type BucketCounts, findGaps } from './gaps'
-import { BUCKET_MS, chooseBucket, periodRange } from './period'
+import { type BucketCounts, findGaps, gapsWithin } from './gaps'
+import { BUCKET_MS, chooseBucket, isPeriodKey, periodRange } from './period'
 
 const FIVE = BUCKET_MS['5m']
 const row = (bucket: number, overrides: Partial<BucketCounts> = {}): BucketCounts => ({
@@ -36,7 +36,7 @@ describe('findGaps', () => {
       row(3 * FIVE),
     ]
     expect(findGaps(rows, 0, 4 * FIVE, FIVE)).toEqual([
-      { from: FIVE, to: 3 * FIVE, kind: 'invalid', reason: 'stuck' },
+      { from: FIVE, to: 3 * FIVE, kind: 'discarded', reason: 'stuck' },
     ])
   })
 
@@ -44,6 +44,40 @@ describe('findGaps', () => {
     expect(findGaps([], 1000, 3 * FIVE, FIVE)).toEqual([
       { from: 1000, to: 3 * FIVE, kind: 'no_data', reason: null },
     ])
+  })
+})
+
+describe('gapsWithin', () => {
+  const hour = 3_600_000
+  const open: Array<[number, number]> = [
+    [10 * hour, 22 * hour],
+    [34 * hour, 46 * hour],
+  ]
+
+  test('conta só o trecho de cada lacuna que cai no expediente', () => {
+    const gaps = [
+      { from: 1 * hour, to: 7 * hour }, // madrugada: loja fechada
+      { from: 17 * hour, to: 28 * hour }, // começa aberta, atravessa a noite
+      { from: 33 * hour, to: 35 * hour }, // termina depois da abertura
+    ]
+    expect(gapsWithin(gaps, open)).toEqual({ count: 2, ms: 5 * hour + 1 * hour })
+  })
+
+  test('lacuna que cobre dois expedientes soma os dois', () => {
+    expect(gapsWithin([{ from: 0, to: 48 * hour }], open)).toEqual({ count: 1, ms: 24 * hour })
+  })
+
+  test('sem horário de funcionamento, nada cai no expediente', () => {
+    expect(gapsWithin([{ from: 0, to: hour }], [])).toEqual({ count: 0, ms: 0 })
+  })
+})
+
+describe('isPeriodKey', () => {
+  test('aceita só as chaves do período, nunca propriedades herdadas', () => {
+    expect(isPeriodKey('7d')).toBe(true)
+    expect(isPeriodKey('toString')).toBe(false)
+    expect(isPeriodKey('__proto__')).toBe(false)
+    expect(isPeriodKey(7)).toBe(false)
   })
 })
 

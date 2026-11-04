@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { expandSamples, localToUtc, parsePacketLine } from './packet'
+import { CLOCK_TOLERANCE_MS, expandSamples, FleetClock, localToUtc, parsePacketLine } from './packet'
 
 const line = (overrides: Record<string, unknown> = {}) =>
   JSON.stringify({
@@ -67,5 +67,68 @@ describe('expandSamples', () => {
     expect(new Date(samples.at(-1)?.ts ?? 0).toISOString()).toBe('2026-01-12T03:05:31.000Z')
     expect(new Date(samples[0]?.ts ?? 0).toISOString()).toBe('2026-01-12T03:00:01.000Z')
     expect(samples[9]?.value).toBe(25.9)
+  })
+})
+
+describe('FleetClock', () => {
+  const t0 = Date.parse('2026-02-10T13:00:00Z')
+  const minute = 60_000
+  const running = () => {
+    const clock = new FleetClock(3)
+    clock.accept('IOT001', t0)
+    clock.accept('IOT002', t0 + 10_000)
+    return clock
+  }
+
+  test('o agora começa quando um segundo dispositivo confirma o horário', () => {
+    const clock = new FleetClock(3)
+    expect(clock.accept('IOT001', t0)).toBe(true)
+    expect(clock.now).toBeNull()
+    expect(clock.accept('IOT002', t0 + 10_000)).toBe(true)
+    expect(clock.now).toBe(t0 + 10_000)
+  })
+
+  test('um dispositivo que envia sozinho confirma o próprio relógio no pacote seguinte', () => {
+    const clock = new FleetClock(3)
+    clock.accept('IOT001', t0)
+    expect(clock.accept('IOT001', t0 + 6 * minute)).toBe(true)
+    expect(clock.now).toBe(t0 + 6 * minute)
+  })
+
+  test('pacote até 10 min à frente avança o agora', () => {
+    const clock = running()
+    expect(clock.accept('IOT001', t0 + 10_000 + CLOCK_TOLERANCE_MS)).toBe(true)
+    expect(clock.now).toBe(t0 + 10_000 + CLOCK_TOLERANCE_MS)
+  })
+
+  test('um relógio adiantado sozinho não move o agora, nem nos pacotes seguintes', () => {
+    const clock = running()
+    // GMT -6 no lugar de -3: o pacote chega 3 h à frente
+    expect(clock.accept('IOT002', t0 + 3 * 60 * minute)).toBe(false)
+    expect(clock.accept('IOT002', t0 + 3 * 60 * minute + 6 * minute)).toBe(false)
+    expect(clock.accept('IOT001', t0 + 6 * minute)).toBe(true)
+    expect(clock.now).toBe(t0 + 6 * minute)
+  })
+
+  test('a frota voltando de uma interrupção confirma o salto a partir do segundo dispositivo', () => {
+    const clock = running()
+    const back = t0 + 60 * minute
+    expect(clock.accept('IOT001', back)).toBe(false)
+    expect(clock.accept('IOT002', back + 20_000)).toBe(true)
+    expect(clock.now).toBe(back + 20_000)
+    expect(clock.accept('IOT001', back + 6 * minute)).toBe(true)
+    expect(clock.accept('IOT003', back + 30_000)).toBe(true)
+  })
+
+  test('com um único dispositivo cadastrado vale o maior horário', () => {
+    const clock = new FleetClock(1, t0)
+    expect(clock.accept('IOT001', t0 + 60 * minute)).toBe(true)
+    expect(clock.now).toBe(t0 + 60 * minute)
+  })
+
+  test('ao retomar, os horários já gravados confirmam saltos como antes', () => {
+    const back = t0 + 60 * minute
+    const clock = new FleetClock(3, t0, [['IOT001', back]])
+    expect(clock.accept('IOT002', back + 20_000)).toBe(true)
   })
 })

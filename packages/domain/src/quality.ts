@@ -70,11 +70,18 @@ export interface ClassifiedSample {
   quality: QualityCode
 }
 
+export interface ValidReading {
+  ts: number
+  value: number
+}
+
 interface Run {
   value: number
   startTs: number
   lastTs: number
   flagged: boolean
+  /** Última leitura válida antes da sequência começar */
+  validBefore: ValidReading | null
 }
 
 export interface StuckRange {
@@ -84,11 +91,21 @@ export interface StuckRange {
   value: number
 }
 
+export interface StuckDetection {
+  /** Início da sequência travada */
+  startTs: number
+  /** Trecho que chegou em lotes anteriores e precisa ser remarcado no banco (null se começou neste lote) */
+  retro: StuckRange | null
+  /** Para onde volta o "último valor válido" do dispositivo: o que veio depois era o sensor travado */
+  validBefore: ValidReading | null
+}
+
 /**
  * Detecta sensor travado em fluxo. Recebe as amostras de cada dispositivo em ordem temporal
  * (pacotes ao vivo; pacotes atrasados não passam por aqui) e:
  * - marca como Stuck, no próprio lote, as amostras de uma sequência que já atingiu o limite;
- * - devolve o trecho anterior da sequência, já gravado, que precisa ser remarcado no banco.
+ * - no lote em que a sequência atinge o limite, devolve o trecho anterior, já gravado, que precisa
+ *   ser remarcado no banco e a última leitura válida antes dela.
  */
 export class StuckDetector {
   private readonly runs = new Map<string, Run>()
@@ -99,11 +116,19 @@ export class StuckDetector {
   ) {}
 
   /** Restaura a sequência em curso de um dispositivo (ex.: ao retomar a ingestão de um checkpoint). */
-  restore(deviceId: string, run: Omit<Run, 'flagged'>): void {
-    this.runs.set(deviceId, { ...run, flagged: run.lastTs - run.startTs >= this.minDurationMs })
+  restore(
+    deviceId: string,
+    run: Omit<Run, 'flagged' | 'validBefore'> & { validBefore?: ValidReading | null },
+  ): void {
+    this.runs.set(deviceId, {
+      ...run,
+      validBefore: run.validBefore ?? null,
+      flagged: run.lastTs - run.startTs >= this.minDurationMs,
+    })
   }
 
-  observe(deviceId: string, samples: ClassifiedSample[]): StuckRange | null {
+  observe(deviceId: string, samples: ClassifiedSample[]): StuckDetection | null {
+    let detection: StuckDetection | null = null
     let retro: StuckRange | null = null
     let batchStartTs: number | null = null
     for (const sample of samples) {
@@ -120,6 +145,7 @@ export class StuckDetector {
           startTs: sample.ts,
           lastTs: sample.ts,
           flagged: false,
+          validBefore: run ? (run.flagged ? run.validBefore : { ts: run.lastTs, value: run.value }) : null,
         })
         continue
       }
@@ -131,6 +157,7 @@ export class StuckDetector {
         if (run.startTs < batchStartTs) {
           retro = { deviceId, from: run.startTs, to: batchStartTs - 1, value: run.value }
         }
+        detection = { startTs: run.startTs, retro, validBefore: run.validBefore }
         // Amostras da sequência que estão neste mesmo lote, antes desta
         for (const earlier of samples) {
           if (earlier === sample) break
@@ -140,6 +167,6 @@ export class StuckDetector {
         }
       }
     }
-    return retro
+    return detection
   }
 }
