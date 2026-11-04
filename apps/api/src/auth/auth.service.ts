@@ -3,11 +3,21 @@ import { jwtVerify, SignJWT } from 'jose'
 import type pg from 'pg'
 import { APP_CONFIG, type AppConfig } from '../config'
 import { PG_POOL } from '../database/database.module'
+import { AttemptLimiter } from './attempt-limiter'
 import type { Role, SessionUser } from './session'
 
-const MAX_FAILURES = 5
-const LOCK_MS = 5 * 60_000
 const SCOPE_CACHE_MS = 30_000
+
+function tooManyAttempts(retryAfterMs: number): HttpException {
+  const minutes = Math.ceil(retryAfterMs / 60_000)
+  return new HttpException(
+    {
+      message: `Muitas tentativas de entrada. Tente de novo em ${minutes} min.`,
+      retryAfterSeconds: Math.ceil(retryAfterMs / 1000),
+    },
+    HttpStatus.TOO_MANY_REQUESTS,
+  )
+}
 
 interface UserRow {
   id: string
@@ -32,7 +42,10 @@ const USER_QUERY = `
 @Injectable()
 export class AuthService {
   private readonly key: Uint8Array
-  private readonly failures = new Map<string, { count: number; until: number }>()
+  // Por IP, toda tentativa conta (freia varredura de e-mails); por e-mail, só as falhas (freia
+  // adivinhar a senha de uma conta a partir de vários IPs). Cada tentativa custa um argon2id.
+  private readonly attemptsByIp = new AttemptLimiter(20, 60_000)
+  private readonly failuresByEmail = new AttemptLimiter(5, 5 * 60_000)
   private readonly cache = new Map<string, { user: SessionUser; expires: number }>()
   // Hash de referência para responder no mesmo tempo quando o e-mail não existe
   private readonly dummyHash = Bun.password.hash(crypto.randomUUID(), { algorithm: 'argon2id' })
@@ -45,25 +58,20 @@ export class AuthService {
   }
 
   async login(email: string, password: string, ip: string): Promise<{ user: SessionUser; token: string }> {
-    const attemptKey = `${email.toLowerCase()}|${ip}`
-    const failure = this.failures.get(attemptKey)
-    if (failure && failure.count >= MAX_FAILURES && failure.until > Date.now()) {
-      throw new HttpException(
-        'Muitas tentativas. Tente de novo em alguns minutos.',
-        HttpStatus.TOO_MANY_REQUESTS,
-      )
-    }
+    const account = email.trim().toLowerCase()
+    const wait = Math.max(this.attemptsByIp.retryAfterMs(ip), this.failuresByEmail.retryAfterMs(account))
+    if (wait > 0) throw tooManyAttempts(wait)
+    this.attemptsByIp.hit(ip)
 
     const { rows } = await this.pool.query<UserRow>(`${USER_QUERY} WHERE u.email = $1`, [email])
     const row = rows[0]
     const valid = await Bun.password.verify(password, row?.password_hash ?? (await this.dummyHash))
     if (!row?.password_hash || !valid) {
-      const count = (failure && failure.until > Date.now() ? failure.count : 0) + 1
-      this.failures.set(attemptKey, { count, until: Date.now() + LOCK_MS })
-      throw new UnauthorizedException('E-mail ou senha incorretos')
+      this.failuresByEmail.hit(account)
+      throw new UnauthorizedException('E-mail ou senha incorretos.')
     }
 
-    this.failures.delete(attemptKey)
+    this.failuresByEmail.reset(account)
     const user = toSessionUser(row)
     const token = await new SignJWT({ role: user.role })
       .setProtectedHeader({ alg: 'HS256' })

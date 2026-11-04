@@ -1,5 +1,5 @@
 import type { DemoUser, SessionUser as SessionUserContract } from '@celsius/contracts'
-import { Body, Controller, Get, HttpCode, NotFoundException, Post, Req, Res } from '@nestjs/common'
+import { Body, Controller, Get, HttpCode, Inject, NotFoundException, Post, Req, Res } from '@nestjs/common'
 import {
   ApiCookieAuth,
   ApiOkResponse,
@@ -10,19 +10,23 @@ import {
   ApiTooManyRequestsResponse,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger'
-import { IsEmail, IsString, MinLength } from 'class-validator'
-import type { Request, Response } from 'express'
+import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator'
+import type { CookieOptions, Request, Response } from 'express'
+import { APP_CONFIG, type AppConfig } from '../config'
 import { AuthService } from './auth.service'
 import { CurrentUser, Public, type Role, SESSION_COOKIE, type SessionUser } from './session'
 
 export class LoginDto {
-  @ApiProperty({ example: 'ana.ribeiro@diel.example' })
+  @ApiProperty({ example: 'ana.ribeiro@diel.example', maxLength: 254 })
   @IsEmail()
+  @MaxLength(254)
   email: string
 
-  @ApiProperty({ description: 'Senha de demonstração (DEMO_PASSWORD ou a gerada no seed)' })
+  // O teto evita que uma senha enorme vire custo de CPU no argon2id sem autenticação
+  @ApiProperty({ description: 'Senha de demonstração (DEMO_PASSWORD ou a gerada no seed)', maxLength: 256 })
   @IsString()
   @MinLength(1)
+  @MaxLength(256)
   password: string
 }
 
@@ -56,7 +60,19 @@ const toDto = (user: SessionUser): SessionUserDto => ({
 @ApiTags('Sessão')
 @Controller({ path: 'auth', version: '1' })
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
+  ) {}
+
+  private cookieOptions(request: Request): CookieOptions {
+    return {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: this.config.COOKIE_SECURE || request.secure,
+      path: '/',
+    }
+  }
 
   @Public()
   @Post('login')
@@ -64,7 +80,10 @@ export class AuthController {
   @ApiOperation({ summary: 'Entra com um usuário do cadastro e recebe o cookie de sessão (httpOnly)' })
   @ApiOkResponse({ type: SessionUserDto })
   @ApiUnauthorizedResponse({ description: 'E-mail ou senha incorretos' })
-  @ApiTooManyRequestsResponse({ description: 'Cinco falhas seguidas bloqueiam o e-mail por 5 minutos' })
+  @ApiTooManyRequestsResponse({
+    description:
+      'Mais de 20 tentativas por minuto do mesmo IP, ou 5 falhas em 5 minutos no mesmo e-mail. O cabeçalho Retry-After diz quantos segundos esperar',
+  })
   async login(
     @Body() body: LoginDto,
     @Req() request: Request,
@@ -72,11 +91,8 @@ export class AuthController {
   ) {
     const { user, token } = await this.auth.login(body.email, body.password, request.ip ?? 'desconhecido')
     response.cookie(SESSION_COOKIE, token, {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: request.secure,
+      ...this.cookieOptions(request),
       maxAge: this.auth.sessionMaxAgeMs,
-      path: '/',
     })
     return toDto(user)
   }
@@ -85,8 +101,8 @@ export class AuthController {
   @Post('logout')
   @HttpCode(204)
   @ApiOperation({ summary: 'Encerra a sessão' })
-  logout(@Res({ passthrough: true }) response: Response) {
-    response.clearCookie(SESSION_COOKIE, { path: '/' })
+  logout(@Req() request: Request, @Res({ passthrough: true }) response: Response) {
+    response.clearCookie(SESSION_COOKIE, this.cookieOptions(request))
   }
 
   @Public()
@@ -97,7 +113,7 @@ export class AuthController {
   @ApiOkResponse({ type: [DemoUserDto] })
   async demoUsers() {
     const users = await this.auth.demoUsers()
-    if (!users) throw new NotFoundException()
+    if (!users) throw new NotFoundException('A lista de usuários só existe no modo de demonstração.')
     return users
   }
 

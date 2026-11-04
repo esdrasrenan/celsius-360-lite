@@ -1,7 +1,7 @@
 import { Controller, type MessageEvent, Sse } from '@nestjs/common'
-import { ApiCookieAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
-import { filter, interval, map, merge, type Observable } from 'rxjs'
-import { CurrentUser, SESSION_COOKIE, type SessionUser } from '../auth/session'
+import { ApiCookieAuth, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger'
+import { concat, interval, map, merge, type Observable, of } from 'rxjs'
+import { SESSION_COOKIE } from '../auth/session'
 import { EventsService } from './events.service'
 
 const HEARTBEAT_MS = 15_000
@@ -14,24 +14,25 @@ export class EventsController {
 
   @Sse()
   @ApiOperation({
-    summary: 'Server-Sent Events: avisa quando a ingestão atualiza o estado das lojas',
+    summary: 'Server-Sent Events: estado da ingestão ao conectar e aviso a cada atualização',
     description:
-      'Evento "state_updated" com o novo "agora" e as lojas afetadas (só as do escopo do usuário). ' +
-      'Um "ping" a cada 15 s mantém a conexão aberta através de proxies.',
+      'Primeiro evento "snapshot" {type, now, lastSeq, ingesting}: "agora" da ingestão e se ela atualizou as ' +
+      'projeções nos últimos 10 s. Depois, "state_updated" {type, now, lastSeq} a cada atualização; a interface ' +
+      'refaz as próprias consultas, que já respeitam o escopo do usuário. Um "ping" a cada 15 s mantém a ' +
+      'conexão aberta através de proxies.',
   })
-  @ApiOkResponse({ description: 'text/event-stream' })
-  stream(@CurrentUser() user: SessionUser): Observable<MessageEvent> {
+  @ApiOkResponse({
+    description: 'Fluxo de eventos snapshot, state_updated e ping',
+    content: { 'text/event-stream': { schema: { type: 'string' } } },
+  })
+  @ApiUnauthorizedResponse({ description: 'Sem sessão válida' })
+  async stream(): Promise<Observable<MessageEvent>> {
+    // Consulta antes de abrir o fluxo: com o banco fora, a resposta é um erro HTTP, não um fluxo vazio
+    const snapshot = await this.events.snapshot()
     const updates = this.events.events$.pipe(
-      map((event) => ({
-        ...event,
-        storeIds: user.scope.all
-          ? event.storeIds
-          : event.storeIds.filter((id) => user.scope.storeIds.includes(id)),
-      })),
-      filter((event) => event.storeIds.length > 0),
-      map((event): MessageEvent => ({ type: 'state_updated', data: event })),
+      map((event): MessageEvent => ({ type: event.type, data: event })),
     )
     const heartbeat = interval(HEARTBEAT_MS).pipe(map((): MessageEvent => ({ type: 'ping', data: {} })))
-    return merge(updates, heartbeat)
+    return concat(of<MessageEvent>({ type: snapshot.type, data: snapshot }), merge(updates, heartbeat))
   }
 }

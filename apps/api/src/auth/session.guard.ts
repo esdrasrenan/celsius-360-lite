@@ -25,11 +25,12 @@ export class SessionGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<Request & { user?: SessionUser }>()
     const token = request.cookies?.[SESSION_COOKIE] as string | undefined
     const user = token ? await this.auth.resolve(token) : null
-    if (!user) throw new UnauthorizedException('Sessão ausente ou expirada')
+    if (!user) throw new UnauthorizedException('Sessão ausente ou expirada.')
     request.user = user
 
     const roles = this.reflector.getAllAndOverride<Role[] | undefined>(ROLES, targets)
-    if (roles && !roles.includes(user.role)) throw new ForbiddenException('Perfil sem acesso a este recurso')
+    if (roles && !roles.includes(user.role))
+      throw new ForbiddenException('Seu perfil não tem acesso a este recurso.')
     return true
   }
 }
