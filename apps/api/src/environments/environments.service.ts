@@ -9,6 +9,7 @@ import {
   compileSchedule,
   EXPECTED_SAMPLING_MS,
   findGaps,
+  type Gap,
   gapsWithin,
   localDays,
   MAX_SERIES_POINTS,
@@ -92,6 +93,7 @@ interface EnvironmentRow {
   last_contact_at: Date | null
   open_now: boolean | null
   next_open_at: Date | null
+  now_ts: Date | null
 }
 
 interface AggregateRow {
@@ -152,7 +154,9 @@ export class EnvironmentsService {
   ) {}
 
   async summary(id: string, query: RangeQueryDto, scope: UserScope): Promise<EnvironmentSummaryDto> {
-    const [environment, now] = await Promise.all([this.find(id, scope), this.nowService.current()])
+    const [environment, latest] = await Promise.all([this.find(id, scope), this.nowService.current()])
+    // O agora da mesma linha do status: as duas consultas podem pegar atualizações diferentes
+    const now = environment.now_ts?.getTime() ?? latest
     const window = indicatorWindow(resolveRange(query, now ?? Date.now()))
     const end = Math.min(window.to, now ?? window.to)
     const open = openIntervals(
@@ -359,11 +363,14 @@ export class EnvironmentsService {
   }
 
   private async find(id: string, scope: UserScope): Promise<EnvironmentRow> {
+    // O Postgres recusa o caractere nulo no parâmetro (erro 500); nenhum id cadastrado tem um
+    if (id.includes('\u0000')) throw new NotFoundException('Ambiente não encontrado')
     const { rows } = await this.pool.query<EnvironmentRow>(
       `SELECT e.id, e.name, e.comfort_min, e.comfort_max, e.opening_hours, e.device_id,
          s.id AS store_id, s.name AS store_name, s.city, s.state_code, s.timezone,
          c.id AS client_id, c.name AS client_name,
-         es.status, es.situation, es.last_value, es.last_valid_at, es.last_contact_at, es.open_now, es.next_open_at
+         es.status, es.situation, es.last_value, es.last_valid_at, es.last_contact_at, es.open_now, es.next_open_at,
+         es.now_ts
        FROM registry.environment e
        JOIN registry.store s ON s.id = e.store_id
        JOIN registry.client c ON c.id = s.client_id
@@ -470,7 +477,42 @@ export class EnvironmentsService {
       spike: row.spike,
       stuck: row.stuck,
     }))
-    return findGaps(counts, from, to, size, GAP_MIN_MS)
+    return this.withReadingEdges(deviceId, findGaps(counts, from, to, size, GAP_MIN_MS), from, to)
+  }
+
+  /**
+   * Leva as bordas de cada indisponibilidade (leituras descartadas) dos blocos de 5 min às próprias
+   * leituras: do primeiro ao último descarte da sequência. Assim o trecho tem os mesmos horários e a
+   * mesma duração do episódio no relatório de qualidade, que conta pelas leituras. As bordas ficam
+   * a menos de um bloco da lacuna, então basta ler 5 min para cada lado delas.
+   */
+  private async withReadingEdges(deviceId: string, gaps: Gap[], from: number, to: number): Promise<Gap[]> {
+    const edges = gaps.flatMap((gap) => (gap.kind === 'discarded' ? [gap.from, gap.to] : []))
+    if (edges.length === 0) return gaps
+    const size = BUCKET_MS['5m']
+    const { rows } = await this.pool.query<{ ts: Date; ok: boolean }>(
+      `SELECT DISTINCT r.ts, r.quality = ${Quality.Ok} AS ok
+       FROM unnest($2::timestamptz[]) AS edge(at)
+       JOIN telemetry.reading r ON r.device_id = $1
+         AND r.ts >= edge.at - interval '5 minutes' AND r.ts < edge.at + interval '5 minutes'
+       ORDER BY r.ts`,
+      [deviceId, edges.map(iso)],
+    )
+    const readings = rows.map((row) => ({ ts: row.ts.getTime(), ok: row.ok }))
+    const around = (at: number) =>
+      readings.filter((reading) => reading.ts >= at - size && reading.ts < at + size)
+
+    return gaps.map((gap) => {
+      if (gap.kind !== 'discarded') return gap
+      const lead = around(gap.from)
+      const validBefore = lead.findLast((reading) => reading.ok && reading.ts < gap.from)?.ts ?? -Infinity
+      const first = lead.find((reading) => !reading.ok && reading.ts > validBefore)?.ts
+      const tail = around(gap.to)
+      const validAfter = tail.find((reading) => reading.ok && reading.ts >= gap.to)?.ts ?? Infinity
+      const last = tail.findLast((reading) => !reading.ok && reading.ts < validAfter)?.ts
+      if (first === undefined || last === undefined) return gap
+      return { ...gap, from: Math.max(from, first), to: Math.min(to, last) }
+    })
   }
 }
 

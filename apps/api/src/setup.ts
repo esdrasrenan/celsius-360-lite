@@ -1,4 +1,4 @@
-import { type INestApplication, VersioningType } from '@nestjs/common'
+import { type INestApplication, type NestApplicationOptions, VersioningType } from '@nestjs/common'
 import { DocumentBuilder, getSchemaPath, type OpenAPIObject, SwaggerModule } from '@nestjs/swagger'
 import cookieParser from 'cookie-parser'
 import { SESSION_COOKIE } from './auth/session'
@@ -7,10 +7,19 @@ import { validationPipe } from './common/validation'
 
 const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete'] as const
 
+/**
+ * Opções do Nest comuns ao servidor e aos testes. O encerramento fecha as conexões abertas: o fluxo
+ * SSE nunca termina sozinho, e sem isto uma aba aberta segurava o docker stop até o SIGKILL. O
+ * EventSource do navegador reconecta sozinho quando a API volta.
+ */
+export const NEST_OPTIONS = { forceCloseConnections: true } as const satisfies NestApplicationOptions
+
 /** Configuração comum ao servidor, aos testes e à geração do OpenAPI. */
 export function configureApp(app: INestApplication) {
   // Atrás de um único nginx, que sobrescreve o X-Forwarded-For com o IP da conexão. Confiar em
-  // mais saltos deixaria o cliente escolher o próprio IP e escapar do limite de login.
+  // mais saltos deixaria o cliente escolher o próprio IP e escapar do limite de login. Isso só vale
+  // para quem passa pelo nginx: quem conecta direto na porta da API (no Compose, 127.0.0.1:3000,
+  // para operação) escolhe o X-Forwarded-For, e então o freio é o limite por e-mail.
   app.getHttpAdapter().getInstance().set('trust proxy', 1)
   app.use(cookieParser())
   app.setGlobalPrefix('api', { exclude: ['health/live', 'health/ready', 'metrics'] })

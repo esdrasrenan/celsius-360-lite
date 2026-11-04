@@ -1,9 +1,9 @@
-import { randomUUID } from 'node:crypto'
 import { Global, Module } from '@nestjs/common'
 import { APP_FILTER } from '@nestjs/core'
 import { LoggerModule } from 'nestjs-pino'
 import { AuthModule } from './auth/auth.module'
 import { ProblemDetailsFilter } from './common/problem.filter'
+import { requestIdFrom } from './common/request-id'
 import { APP_CONFIG, type AppConfig, loadConfig } from './config'
 import { DatabaseModule } from './database/database.module'
 import { EnvironmentsModule } from './environments/environments.module'
@@ -27,7 +27,7 @@ class ConfigModule {}
         pinoHttp: {
           level: config.LOG_LEVEL,
           genReqId: (request, response) => {
-            const id = (request.headers['x-request-id'] as string | undefined) ?? randomUUID()
+            const id = requestIdFrom(request.headers['x-request-id'])
             response.setHeader('x-request-id', id)
             return id
           },

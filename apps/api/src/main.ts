@@ -4,7 +4,7 @@ import { NestFactory } from '@nestjs/core'
 import { Logger } from 'nestjs-pino'
 import { AppModule } from './app.module'
 import { APP_CONFIG, type AppConfig, ConfigError, loadConfig } from './config'
-import { configureApp, mountDocs } from './setup'
+import { configureApp, mountDocs, NEST_OPTIONS } from './setup'
 
 async function bootstrap() {
   // Valida antes do Nest para sair com a lista do que corrigir, sem pilha de erro
@@ -16,7 +16,7 @@ async function bootstrap() {
     process.exit(1)
   }
 
-  const app = await NestFactory.create(AppModule, { bufferLogs: true })
+  const app = await NestFactory.create(AppModule, { bufferLogs: true, ...NEST_OPTIONS })
   const logger = app.get(Logger)
   app.useLogger(logger)
 

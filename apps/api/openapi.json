@@ -176,6 +176,7 @@
             "required": false,
             "in": "query",
             "schema": {
+              "maxLength": 64,
               "example": "CLI-001",
               "type": "string"
             }

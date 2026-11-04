@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import { STATUS_CODES } from 'node:http'
 import type { ProblemDetails } from '@celsius/contracts'
 import {
@@ -12,6 +11,7 @@ import {
 } from '@nestjs/common'
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 import type { Request, Response } from 'express'
+import { requestIdFrom } from './request-id'
 
 type FieldError = NonNullable<ProblemDetails['errors']>[number]
 
@@ -98,7 +98,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     const extra: ExceptionBody = typeof payload === 'object' && payload !== null ? payload : {}
 
     // Erros do body-parser chegam antes do pino-http, que é quem atribui o id
-    const requestId = request.id ?? request.header('x-request-id') ?? randomUUID()
+    const requestId = request.id ?? requestIdFrom(request.header('x-request-id'))
     if (!response.getHeader('x-request-id')) response.setHeader('x-request-id', requestId)
     if (extra.retryAfterSeconds) response.setHeader('retry-after', String(extra.retryAfterSeconds))
 

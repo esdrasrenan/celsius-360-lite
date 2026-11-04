@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import type {
   DailySeries,
   EnvironmentSummary,
+  QualityReport,
   Series,
   SessionUser,
   StoreList,
@@ -77,6 +78,30 @@ describe('visão da rede', () => {
     const page = await api.get<StoreList>('/api/v1/stores?sort=name&pageSize=1&page=2', 'admin')
     expect(page.body).toMatchObject({ total: 2, page: 2, pageSize: 1 })
     expect(page.body.items.map((store) => store.name)).toEqual(['Loja Centro'])
+  })
+
+  test('"agora" é o das projeções, mesmo com o checkpoint horas à frente (reprodução acelerada)', async () => {
+    await env.pool.query("UPDATE state.ingestion SET now_ts = now_ts + interval '7 hours'")
+    try {
+      const stores = await api.get<StoreList>('/api/v1/stores?period=1d', 'admin')
+      expect(stores.body.now).toBe(expected.now)
+      expect(stores.body.period.to).toBe(expected.now)
+      for (const path of ['summary', 'series']) {
+        const { body } = await api.get<{ now: string }>(
+          `/api/v1/environments/AMB-T1/${path}?period=1d`,
+          'admin',
+        )
+        expect(body.now).toBe(expected.now)
+      }
+    } finally {
+      await env.pool.query("UPDATE state.ingestion SET now_ts = now_ts - interval '7 hours'")
+    }
+  })
+
+  test('busca sem resultado: os totais não inventam conforto nem cobertura', async () => {
+    const { body } = await api.get<StoreList>('/api/v1/stores?search=zzzzzz', 'admin')
+    expect(body.total).toBe(0)
+    expect(body.totals).toMatchObject({ stores: 0, comfortPct: null, coveragePct: null })
   })
 
   test('parâmetro inválido vira 400 com o campo na resposta', async () => {
@@ -205,6 +230,19 @@ describe('detalhe do ambiente', () => {
       'admin',
     )
     expect(hours.body.bucket).toBe('raw')
+  })
+
+  test('o trecho do sensor travado tem os horários das leituras, os mesmos do relatório de qualidade', async () => {
+    const report = await api.get<QualityReport>('/api/v1/quality', 'admin')
+    const [episode] = report.body.stuckEpisodes
+    // 01:00 a 02:29:30 UTC: o bloco de 5 min terminaria às 02:30
+    expect(episode).toMatchObject({ from: '2026-03-03T01:00:00.000Z', to: '2026-03-03T02:29:30.000Z' })
+    for (const period of ['7d', '30d']) {
+      const { body } = await api.get<Series>(`/api/v1/environments/AMB-T1/series?period=${period}`, 'admin')
+      expect(body.gaps.filter((gap) => gap.kind === 'discarded')).toEqual([
+        { from: episode?.from as string, to: episode?.to as string, kind: 'discarded', reason: 'stuck' },
+      ])
+    }
   })
 
   test('bucket explícito que passaria de 5.000 pontos responde 400 em português', async () => {

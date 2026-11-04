@@ -93,15 +93,18 @@ export class ListStoresQueryDto {
   @NotContains('\u0000')
   search?: string
 
-  @ApiPropertyOptional({ example: 'CLI-001' })
+  @ApiPropertyOptional({ example: 'CLI-001', maxLength: 64 })
   @IsOptional()
   @IsString()
+  @MaxLength(64)
+  @NotContains('\u0000')
   clientId?: string
 
   @ApiPropertyOptional({ example: 'LOJA-RJ-001', description: 'Uma loja só, pelo id exato' })
   @IsOptional()
   @IsString()
   @MaxLength(64)
+  @NotContains('\u0000')
   storeId?: string
 
   @ApiPropertyOptional({

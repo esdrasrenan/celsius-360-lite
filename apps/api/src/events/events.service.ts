@@ -1,12 +1,11 @@
 import type { SnapshotEvent, StateUpdatedEvent } from '@celsius/contracts'
+import { EVENTS_CHANNEL } from '@celsius/domain'
 import { Inject, Injectable, Logger, type OnApplicationShutdown, type OnModuleInit } from '@nestjs/common'
 import pg from 'pg'
 import { Observable, Subject, share } from 'rxjs'
 import { z } from 'zod'
 import { APP_CONFIG, type AppConfig } from '../config'
 import { PG_POOL } from '../database/database.module'
-
-export const EVENTS_CHANNEL = 'celsius_events'
 
 /** Só o que o contrato publica; campos a mais no NOTIFY (como storeIds) ficam de fora. */
 const notification = z.object({ now: z.string(), lastSeq: z.number() })

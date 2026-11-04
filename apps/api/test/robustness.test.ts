@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { ProblemDetails, QualityReport } from '@celsius/contracts'
+import { EVENTS_CHANNEL } from '@celsius/domain'
 import { type INestApplication, ServiceUnavailableException } from '@nestjs/common'
 import { NestFactory } from '@nestjs/core'
 import type pg from 'pg'
@@ -51,9 +52,9 @@ async function get<T>(
 }
 
 /** Lê um fluxo SSE evento a evento (blocos separados por linha em branco). */
-async function openEvents(cookie?: string) {
+async function openEvents(cookie?: string, at = base) {
   const controller = new AbortController()
-  const response = await fetch(`${base}/api/v1/events`, {
+  const response = await fetch(`${at}/api/v1/events`, {
     headers: { accept: 'text/event-stream', ...(cookie ? { cookie } : {}) },
     signal: controller.signal,
   })
@@ -95,8 +96,8 @@ beforeAll(async () => {
     LOG_LEVEL: 'silent',
   })
   const { AppModule } = await import('../src/app.module')
-  const { configureApp } = await import('../src/setup')
-  app = await NestFactory.create(AppModule, { logger: false })
+  const { configureApp, NEST_OPTIONS } = await import('../src/setup')
+  app = await NestFactory.create(AppModule, { logger: false, ...NEST_OPTIONS })
   configureApp(app)
   await app.listen(0, '127.0.0.1')
   base = `http://127.0.0.1:${(app.getHttpServer().address() as { port: number }).port}`
@@ -214,6 +215,34 @@ describe('problem+json (P0 #8)', () => {
     )
   })
 
+  test('caractere nulo no id da loja, do cliente ou do ambiente dá 400 ou 404, nunca 500', async () => {
+    const cases: Array<[string, string]> = [
+      ['storeId=%00', 'storeId'],
+      ['storeId=a%00', 'storeId'],
+      ['clientId=%00', 'clientId'],
+      [`clientId=${'c'.repeat(65)}`, 'clientId'],
+    ]
+    for (const [query, field] of cases) {
+      const { status, body } = await get<ProblemDetails>(`/api/v1/stores?period=1d&${query}`, 'admin')
+      expect(status).toBe(400)
+      expect(body.errors?.map((error) => error.field)).toEqual([field])
+    }
+    for (const route of ['summary', 'series', 'profile', 'daily']) {
+      expect((await get(`/api/v1/environments/a%00b/${route}`, 'admin')).status).toBe(404)
+    }
+  })
+
+  test('x-request-id longo ou fora do padrão vira um UUID; o id simples é mantido', async () => {
+    for (const id of ['a'.repeat(65), 'id<forjado>', 'id com espaço']) {
+      const response = await fetch(`${base}/api/v1/stores`, { headers: { 'x-request-id': id } })
+      const body = (await response.json()) as ProblemDetails
+      expect(body.requestId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+      expect(response.headers.get('x-request-id')).toBe(body.requestId as string)
+    }
+    const kept = await fetch(`${base}/api/v1/stores`, { headers: { 'x-request-id': 'web_1.a-2' } })
+    expect(((await kept.json()) as ProblemDetails).requestId).toBe('web_1.a-2')
+  })
+
   test('erros fora das rotas (rota inexistente, JSON malformado) também saem em português', async () => {
     const missing = await get<ProblemDetails>('/api/v1/nao-existe', 'admin')
     expect(missing.status).toBe(404)
@@ -282,7 +311,7 @@ describe('tempo real (P0 #10)', () => {
   test('state_updated repassa só type, now e lastSeq, com ou sem storeIds no NOTIFY', async () => {
     const live = await openEvents(cookies.gestor)
     expect((await live.next()).event).toBe('snapshot')
-    const notify = (payload: string) => env.pool.query("SELECT pg_notify('celsius_events', $1)", [payload])
+    const notify = (payload: string) => env.pool.query('SELECT pg_notify($1, $2)', [EVENTS_CHANNEL, payload])
     await notify(
       JSON.stringify({ type: 'state_updated', now: expected.now, lastSeq: 7, storeIds: ['LOJA-T-PE'] }),
     )
@@ -295,6 +324,25 @@ describe('tempo real (P0 #10)', () => {
       { event: 'state_updated', data: { type: 'state_updated', now: expected.now, lastSeq: 7 } },
       { event: 'state_updated', data: { type: 'state_updated', now: expected.now, lastSeq: 8 } },
     ])
+  })
+
+  test('um SSE aberto não segura o encerramento da API', async () => {
+    // Outra instância, para não fechar a dos demais testes
+    const { AppModule } = await import('../src/app.module')
+    const { configureApp, NEST_OPTIONS } = await import('../src/setup')
+    const other = await NestFactory.create(AppModule, { logger: false, ...NEST_OPTIONS })
+    configureApp(other)
+    await other.listen(0, '127.0.0.1')
+    const at = `http://127.0.0.1:${(other.getHttpServer().address() as { port: number }).port}`
+
+    const live = await openEvents(cookies.gestor, at)
+    expect((await live.next()).event).toBe('snapshot')
+    const started = performance.now()
+    await other.close()
+    expect(performance.now() - started).toBeLessThan(1000)
+    // A conexão cai do lado do servidor; o EventSource do navegador reconecta sozinho
+    await expect(live.next()).rejects.toThrow()
+    live.close()
   })
 })
 

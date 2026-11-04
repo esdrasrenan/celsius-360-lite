@@ -30,8 +30,8 @@ export async function startApi(env: TestEnvironment): Promise<TestApi> {
     LOG_LEVEL: 'silent',
   })
   const { AppModule } = await import('../src/app.module')
-  const { configureApp } = await import('../src/setup')
-  const app: INestApplication = await NestFactory.create(AppModule, { logger: false })
+  const { configureApp, NEST_OPTIONS } = await import('../src/setup')
+  const app: INestApplication = await NestFactory.create(AppModule, { logger: false, ...NEST_OPTIONS })
   configureApp(app)
   await app.listen(0, '127.0.0.1')
   const base = `http://127.0.0.1:${(app.getHttpServer().address() as { port: number }).port}`

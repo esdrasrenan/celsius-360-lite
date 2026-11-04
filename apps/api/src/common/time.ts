@@ -79,7 +79,9 @@ export function resolveRange(query: RangeQueryDto, now: number): ResolvedRange {
 
 /**
  * "Agora" do sistema: o horário do último pacote processado pela ingestão (regra do desafio).
- * Status e períodos usam esta referência, nunca o relógio do servidor.
+ * Status e períodos usam esta referência, nunca o relógio do servidor. Vem da última projeção, e
+ * não do checkpoint: durante a reprodução acelerada o checkpoint anda a cada lote e as projeções a
+ * cada atualização, e os períodos ficariam à frente do status mostrado ao lado.
  */
 @Injectable()
 export class NowService {
@@ -87,7 +89,8 @@ export class NowService {
 
   async current(): Promise<number | null> {
     const { rows } = await this.pool.query<{ now: Date | null }>(
-      'SELECT max(now_ts) AS now FROM state.ingestion',
+      `SELECT coalesce((SELECT max(now_ts) FROM state.environment_snapshot),
+         (SELECT max(now_ts) FROM state.ingestion)) AS now`,
     )
     return rows[0]?.now?.getTime() ?? null
   }

@@ -148,7 +148,8 @@ export class StoresService {
         `SELECT t.*, e.name AS worst_env_name, ws.id AS worst_store_id, ws.name AS worst_store_name
          FROM (
            SELECT
-             (SELECT max(now_ts) FROM state.ingestion) AS now,
+             -- O "agora" das próprias projeções, não o do checkpoint, que anda antes delas
+             (SELECT max(now_ts) FROM state.store_snapshot) AS now,
              count(*) FILTER (WHERE m) AS stores,
              sum(environments) FILTER (WHERE m) AS environments,
              sum(env_online) FILTER (WHERE m) AS online,
@@ -163,7 +164,8 @@ export class StoresService {
              round(100.0 * sum(samples_within) FILTER (WHERE m) / nullif(sum(samples_in_hours) FILTER (WHERE m), 0), 2) AS comfort_pct,
              round(100.0 * sum(samples_above) FILTER (WHERE m) / nullif(sum(samples_in_hours) FILTER (WHERE m), 0), 2) AS above_pct,
              round(100.0 * sum(samples_below) FILTER (WHERE m) / nullif(sum(samples_in_hours) FILTER (WHERE m), 0), 2) AS below_pct,
-             least(100, round(100.0 * sum(samples_in_hours) FILTER (WHERE m) / nullif(sum(samples_expected) FILTER (WHERE m), 0), 2)) AS coverage_pct,
+             -- LEAST ignora NULL: sem horário esperado, a cobertura fica nula, não 100
+             CASE WHEN sum(samples_expected) FILTER (WHERE m) > 0 THEN least(100, round(100.0 * sum(samples_in_hours) FILTER (WHERE m) / sum(samples_expected) FILTER (WHERE m), 2)) END AS coverage_pct,
              (array_agg(worst_env_id ORDER BY worst_env_comfort, worst_env_id)
                FILTER (WHERE m AND worst_env_comfort IS NOT NULL))[1] AS worst_env_id,
              min(worst_env_comfort) FILTER (WHERE m) AS worst_env_comfort,
