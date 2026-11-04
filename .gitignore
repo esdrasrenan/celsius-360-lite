@@ -13,6 +13,7 @@ dados/*
 # Artefatos de teste
 apps/web/playwright-report/
 apps/web/test-results/
+apps/web/e2e/.sessoes/
 .tmp/
 
 # Arquivos temporários de diagnóstico

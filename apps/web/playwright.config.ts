@@ -10,13 +10,19 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : 'list',
   use: {
-    baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:18080',
+    baseURL: process.env.E2E_BASE_URL ?? 'http://127.0.0.1:18080',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     locale: 'pt-BR',
     timezoneId: 'America/Sao_Paulo',
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1366, height: 900 } } },
+    // Entra uma vez com cada usuário da fixture e grava a sessão (e2e/support.ts)
+    { name: 'sessoes', testMatch: /sessions\.setup\.ts/ },
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1366, height: 900 } },
+      dependencies: ['sessoes'],
+    },
   ],
 })
