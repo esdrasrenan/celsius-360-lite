@@ -3,11 +3,13 @@ import tailwindcss from '@tailwindcss/vite'
 import react, { reactCompilerPreset } from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
-const api = process.env.API_URL ?? 'http://localhost:3000'
+const api = process.env.API_URL ?? 'http://127.0.0.1:3000'
 
 export default defineConfig({
   plugins: [react(), babel({ presets: [reactCompilerPreset()] }), tailwindcss()],
   server: {
+    // Explícito: no Windows o Vite pode escutar só em [::1], e 127.0.0.1 fica inacessível
+    host: '127.0.0.1',
     port: 5173,
     proxy: { '/api': { target: api, changeOrigin: false } },
   },

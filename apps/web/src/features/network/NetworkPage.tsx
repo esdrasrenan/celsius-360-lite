@@ -1,261 +1,351 @@
-import type { PeriodKey, StoreSort, StoreStatus } from '@celsius/contracts'
-import { ArrowLeft01Icon, ArrowRight01Icon, Search01Icon } from '@hugeicons/core-free-icons'
-import { clsx } from 'clsx'
-import { useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router'
-import { type StoresParams, useClients, useStores } from '../../api/queries'
-import { Button, Choice, EmptyState, Icon, Skeleton, Stat } from '../../components/ui'
-import { formatFullDateTime, formatInteger, formatPercent } from '../../lib/format'
-import { COMFORT_TARGET, PERIOD_LABEL, SORT_LABEL, STORE_STATUS } from '../../lib/labels'
-import { StoreCard } from './StoreCard'
+import type { PeriodKey, StoreList, StoreListItem } from '@celsius/contracts'
+import { periodRange } from '@celsius/domain'
+import { Download04Icon, FilterRemoveIcon, SearchRemoveIcon, Store01Icon } from '@hugeicons/core-free-icons'
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router'
+import {
+  queries,
+  type StoresParams,
+  useClients,
+  usePrefetchStores,
+  useSession,
+  useStores,
+} from '../../api/queries'
+import { Button } from '../../components/Button'
+import { EmptyState } from '../../components/EmptyState'
+import { ErrorState } from '../../components/ErrorState'
+import { Menu } from '../../components/Menu'
+import { Pagination } from '../../components/Pagination'
+import { SegmentedControl } from '../../components/SegmentedControl'
+import { Skeleton } from '../../components/Skeleton'
+import { formatPeriod, NETWORK_TIME_ZONE, NETWORK_TIME_ZONE_LABEL, plural } from '../../lib/format'
+import { PERIOD_FULL_LABEL, PERIOD_LABEL } from '../../lib/states'
+import { csvFileName, downloadFile, storesCsv } from './csv'
+import { FilterBar } from './FilterBar'
+import { NetworkKpis } from './NetworkKpis'
+import {
+  CLEARED_FILTERS,
+  defaultOpen,
+  filterCount,
+  type NetworkView,
+  PERIODS,
+  toStoresParams,
+  useNetworkView,
+} from './params'
+import { StoreTable } from './StoreTable'
 
-const PERIODS = (['1d', '7d', '30d'] as const).map((value) => ({ value, label: PERIOD_LABEL[value] }))
-const STATUS_FILTERS: Array<{ value: string; label: string; statuses?: StoreStatus[] }> = [
-  { value: 'todas', label: 'Todas' },
-  { value: 'atencao', label: 'Com problema', statuses: ['offline', 'degraded', 'no_data'] },
-  ...(['online', 'degraded', 'offline', 'no_data'] as const).map((status) => ({
-    value: status,
-    label: STORE_STATUS[status]?.label ?? status,
-    statuses: [status],
-  })),
-]
-const PAGE_SIZE = 20
-
-/** Filtros na URL: dá para compartilhar o link e voltar com o navegador. */
-function useNetworkParams(): [
-  StoresParams & { statusFilter: string },
-  (patch: Record<string, string | null>) => void,
-] {
-  const [search, setSearch] = useSearchParams()
-  const statusFilter = search.get('status') ?? 'todas'
-  const params = {
-    period: (['1d', '7d', '30d'].includes(search.get('periodo') ?? '')
-      ? search.get('periodo')
-      : '1d') as PeriodKey,
-    search: search.get('busca') ?? undefined,
-    clientId: search.get('cliente') ?? undefined,
-    status: STATUS_FILTERS.find((filter) => filter.value === statusFilter)?.statuses,
-    sort: ((search.get('ordem') ?? 'status') in SORT_LABEL ? search.get('ordem') : 'status') as StoreSort,
-    page: Math.max(1, Number(search.get('pagina') ?? 1) || 1),
-    pageSize: PAGE_SIZE,
-    statusFilter,
-  }
-  const update = (patch: Record<string, string | null>) =>
-    setSearch(
-      (current) => {
-        const next = new URLSearchParams(current)
-        for (const [key, value] of Object.entries(patch)) {
-          if (value === null || value === '') next.delete(key)
-          else next.set(key, value)
-        }
-        if (!('pagina' in patch)) next.delete('pagina')
-        return next
-      },
-      { replace: true },
-    )
-  return [params, update]
+/** Dica do segmento com a janela exata do período, a mesma que a API usa para calculá-lo. */
+function periodHint(period: PeriodKey, now: string | null): string | undefined {
+  if (!now) return undefined
+  const { from, to } = periodRange(period, Date.parse(now))
+  return `${formatPeriod(from, to, NETWORK_TIME_ZONE)} · ${NETWORK_TIME_ZONE_LABEL}`
 }
 
-export function NetworkPage() {
-  const [params, update] = useNetworkParams()
-  const { statusFilter, ...query } = params
-  const stores = useStores(query)
-  const clients = useClients()
-  const [searchText, setSearchText] = useState(params.search ?? '')
+const EXPORT_PAGE_SIZE = 100
 
-  useEffect(() => {
-    const id = setTimeout(() => {
-      if ((params.search ?? '') !== searchText) update({ busca: searchText })
-    }, 300)
-    return () => clearTimeout(id)
+/** A lista filtrada inteira, página a página (a API limita 100 por página). */
+async function fetchAllStores(
+  fetchPage: (params: StoresParams) => Promise<StoreList>,
+  params: StoresParams,
+): Promise<StoreListItem[]> {
+  const items: StoreListItem[] = []
+  for (let page = 1; ; page++) {
+    const data = await fetchPage({ ...params, page, pageSize: EXPORT_PAGE_SIZE })
+    items.push(...data.items)
+    if (data.items.length === 0 || page * EXPORT_PAGE_SIZE >= data.total) return items
+  }
+}
+
+/**
+ * Visão da rede (seção 4.2): cabeçalho com o período, os 4 indicadores, a barra de filtros e a
+ * tabela de lojas paginada. Todo o estado mora na URL (params.ts).
+ */
+export function NetworkPage() {
+  const { view, update: updateView } = useNetworkView()
+  const location = useLocation()
+  const client = useQueryClient()
+  const prefetch = usePrefetchStores()
+  const searchRef = useRef<HTMLInputElement>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
+  const [exportFailed, setExportFailed] = useState(false)
+
+  const user = useSession().data
+  const singleStore = !!user && !user.allStores && user.storeIds.length === 1
+  const params = toStoresParams(view)
+  const stores = useStores(params)
+  const clients = useClients({ enabled: !singleStore })
+  const filtered = filterCount(view) > 0
+  // Sem filtro, a própria lista dá o tamanho do acesso; com filtro, uma consulta de 1 item
+  const scope = useQuery({
+    ...queries.stores({ period: view.period, sort: 'status', page: 1, pageSize: 1 }),
+    enabled: filtered,
+    placeholderData: keepPreviousData,
   })
 
   const data = stores.data
-  const totals = data?.totals
-  const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1
-  const withoutReading = totals ? totals.offline + totals.noData + totals.sensorFault : 0
+  const reloading = stores.isPlaceholderData
+  const firstLoad = stores.isPending
+  const error = stores.isError ? stores.error : null
+  const scopeTotals = filtered ? scope.data?.totals : data?.totals
+  const items = !error && data ? data.items : []
+  const now = data?.now ?? null
+  // Com filtro (uma busca sem resultado), a loja do gerente vem da consulta do escopo
+  const singleStoreItem = singleStore ? (filtered ? scope.data?.items[0] : items[0]) : undefined
+
+  const update = (patch: Partial<NetworkView>, mode?: 'push' | 'replace') => {
+    setNotice(null)
+    updateView(patch, mode)
+  }
+  const clearFilters = () => update(CLEARED_FILTERS)
+
+  // URL normalizada: parâmetro inválido sai e página além do fim vira a última, sem novo histórico
+  useEffect(() => {
+    updateView({}, 'replace')
+  })
+  useEffect(() => {
+    if (data && !reloading && data.page !== view.page) updateView({ page: data.page }, 'replace')
+  }, [data, reloading, view.page, updateView])
+  useEffect(() => {
+    const list = clients.data
+    if (!list || !view.clientId || list.some((item) => item.id === view.clientId)) return
+    updateView({ clientId: null }, 'replace')
+    setNotice('O cliente do link não existe ou não está no seu acesso, e o filtro foi removido.')
+  }, [clients.data, view.clientId, updateView])
+
+  // Pré-carga da próxima página: a troca não pisca
+  useEffect(() => {
+    if (!data || reloading || data.page * data.pageSize >= data.total) return
+    prefetch({ ...params, page: data.page + 1 })
+  })
+
+  const open = new Set(view.open ?? defaultOpen(items, view.search))
+  const toggle = (storeId: string) => {
+    const next = new Set(open)
+    if (!next.delete(storeId)) next.add(storeId)
+    update({ open: [...next] }, 'replace')
+  }
+
+  const exportCsv = async () => {
+    setExporting(true)
+    setExportFailed(false)
+    try {
+      const all = await fetchAllStores((page) => client.fetchQuery(queries.stores(page)), params)
+      downloadFile(csvFileName(view.period, now), storesCsv(all))
+    } catch {
+      setExportFailed(true)
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const search = view.search.trim()
+  const ofScope = scopeTotals ? `0 de ${plural(scopeTotals.stores, 'loja', 'lojas')}.` : ''
+  const otherFilters = filterCount({ ...view, search: '' }) > 0
+  const empty =
+    data && data.items.length === 0 ? (
+      data.now === null ? (
+        <EmptyState
+          title="Aguardando a primeira telemetria"
+          description="A ingestão ainda não processou nenhum pacote. A tela se atualiza sozinha."
+        />
+      ) : !filtered ? (
+        <EmptyState
+          icon={Store01Icon}
+          title="Nenhuma loja no seu acesso"
+          description="Peça a um administrador da Diel para vincular lojas ao seu usuário."
+        />
+      ) : search ? (
+        <EmptyState
+          icon={SearchRemoveIcon}
+          title={`Nenhuma loja para "${search}"`}
+          description={`${ofScope} A busca considera loja, ambiente, cidade, UF, cliente e dispositivo.`}
+          actions={
+            <>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  update({ search: '' })
+                  searchRef.current?.focus()
+                }}
+              >
+                Limpar busca
+              </Button>
+              {otherFilters && <Button onClick={clearFilters}>Limpar filtros</Button>}
+            </>
+          }
+        />
+      ) : (
+        <EmptyState
+          icon={FilterRemoveIcon}
+          title="Nenhuma loja com esses filtros"
+          description={ofScope}
+          actions={
+            <Button variant="primary" onClick={clearFilters}>
+              Limpar filtros
+            </Button>
+          }
+        />
+      )
+    ) : null
+
+  const count = error
+    ? 'Lojas indisponíveis'
+    : !data
+      ? 'Carregando lojas…'
+      : data.items.length === 0
+        ? search
+          ? `Nenhuma loja para "${search}"`
+          : 'Nenhuma loja'
+        : `${plural(data.total, 'loja', 'lojas')} · ${plural(data.totals.environments, 'ambiente', 'ambientes')}`
+
+  const subtitle = singleStoreItem
+    ? `${singleStoreItem.client.name} · ${singleStoreItem.city}/${singleStoreItem.state}`
+    : scopeTotals
+      ? `${plural(scopeTotals.stores, 'loja', 'lojas')} · ${plural(scopeTotals.environments, 'ambiente', 'ambientes')} · ${NETWORK_TIME_ZONE_LABEL}`
+      : error
+        ? NETWORK_TIME_ZONE_LABEL
+        : null
+
+  const exportItems = [{ label: 'Baixar CSV', aux: 'CSV', onSelect: exportCsv }]
+  const cannotExport = !data || data.total === 0 || !!error
 
   return (
     <div className="flex flex-col gap-8">
-      <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
-        <div className="flex flex-col gap-2">
-          <span className="t-rotulo text-celsius">Celsius 360</span>
-          <h1 className="t-titulo text-[2.1rem] leading-[1.05]">Visão da rede</h1>
-          <p className="text-tinta-3">
-            {data?.now ? (
-              <>
-                Agora: <span className="text-tinta">{formatFullDateTime(data.now)}</span> (horário de
-                Brasília), o último pacote processado
-              </>
-            ) : (
-              'Aguardando a primeira telemetria da ingestão'
-            )}
-          </p>
+      <title>Visão da rede · Celsius 360</title>
+
+      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-col gap-1">
+            <h1 className="text-texto text-titulo-1">
+              {singleStore
+                ? (singleStoreItem?.name ??
+                  (error ? 'Visão da rede' : <Skeleton className="my-1 h-6 w-48" />))
+                : 'Visão da rede'}
+            </h1>
+            <p className="flex min-h-5 items-center text-corpo text-texto-3">
+              {subtitle ?? <Skeleton className="h-3 w-56" />}
+            </p>
+          </div>
+          <div className="md:hidden">
+            <Menu
+              trigger={
+                <Button
+                  icon={Download04Icon}
+                  busy={exporting}
+                  disabled={cannotExport}
+                  aria-label="Exportar"
+                  className="w-9 px-0 pointer-coarse:w-controle-toque"
+                />
+              }
+              items={exportItems}
+            />
+          </div>
         </div>
-        <Choice
-          label="Período"
-          value={params.period}
-          options={PERIODS}
-          onChange={(value) => update({ periodo: value })}
+        <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+          <div className="hidden md:block">
+            <Menu
+              trigger={
+                <Button
+                  icon={Download04Icon}
+                  busy={exporting}
+                  busyLabel="Exportando…"
+                  disabled={cannotExport}
+                >
+                  Exportar
+                </Button>
+              }
+              items={exportItems}
+            />
+          </div>
+          <SegmentedControl
+            legend="Período"
+            value={view.period}
+            options={PERIODS.map((period) => ({
+              value: period,
+              label: PERIOD_LABEL[period],
+              accessibleLabel: PERIOD_FULL_LABEL[period],
+              hint: periodHint(period, now),
+            }))}
+            onValueChange={(period) => update({ period })}
+            onIntent={(period) => period !== view.period && prefetch({ ...params, period, page: 1 })}
+          />
+        </div>
+      </header>
+      {exportFailed && (
+        <p role="alert" className="-mt-5 text-apoio text-falha-texto">
+          Não foi possível gerar o CSV. Tente de novo em instantes.
+        </p>
+      )}
+
+      <NetworkKpis
+        totals={data?.totals}
+        loading={firstLoad}
+        error={!!error}
+        reloading={reloading}
+        view={view}
+        scopeStores={filtered ? (scope.data?.totals.stores ?? null) : null}
+        filtered={filtered}
+        singleStore={singleStore}
+        onFilter={update}
+      />
+
+      <div className="flex flex-col gap-4">
+        <FilterBar
+          view={view}
+          update={update}
+          clients={clients.data}
+          facets={data?.facets}
+          storeName={items.find((store) => store.id === view.storeId)?.name}
+          busy={reloading}
+          loading={firstLoad}
+          singleStore={singleStore}
+          notice={notice}
+          searchRef={searchRef}
+        />
+        <StoreTable
+          items={items}
+          open={open}
+          onToggle={toggle}
+          onToggleAll={(all) => update({ open: all ? items.map((store) => store.id) : [] }, 'replace')}
+          sort={view.sort}
+          onSort={(sort) => update({ sort })}
+          search={view.search}
+          now={now}
+          period={view.period}
+          from={location.search}
+          count={count}
+          loading={firstLoad}
+          reloading={reloading}
+          message={
+            error ? (
+              <ErrorState
+                error={error}
+                onRetry={() => stores.refetch()}
+                onClearFilters={() => update({ ...CLEARED_FILTERS, sort: 'status', pageSize: 20 })}
+              />
+            ) : (
+              empty
+            )
+          }
+          footer={
+            data &&
+            !error &&
+            !singleStore &&
+            data.total > 0 && (
+              <Pagination
+                page={data.page}
+                pageSize={data.pageSize}
+                total={data.total}
+                onPageChange={(page) => update({ page })}
+                onPageSizeChange={(pageSize) => update({ pageSize })}
+                onPageIntent={(page) => prefetch({ ...params, page })}
+              />
+            )
+          }
         />
       </div>
-
-      <section aria-label="Indicadores da rede" className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-        {totals ? (
-          <>
-            <Stat
-              label="Conforto da rede"
-              value={formatPercent(totals.comfortPct)}
-              hint={`do horário de funcionamento na faixa · ${PERIOD_LABEL[params.period].toLowerCase()}`}
-              emphasis
-            />
-            <Stat
-              label="Ambientes online"
-              value={`${formatInteger(totals.online)}/${formatInteger(totals.environments)}`}
-              hint={`em ${formatInteger(totals.stores)} ${totals.stores === 1 ? 'loja' : 'lojas'}`}
-            />
-            <Stat
-              label="Fora da faixa agora"
-              value={formatInteger(totals.outOfRange)}
-              hint="ambientes em horário de funcionamento"
-              tone={totals.outOfRange > 0 ? 'alerta' : undefined}
-            />
-            <Stat
-              label="Abaixo da meta"
-              value={formatInteger(totals.belowTarget)}
-              hint={`ambientes com conforto abaixo de ${COMFORT_TARGET}%`}
-              tone={totals.belowTarget > 0 ? 'alerta' : undefined}
-            />
-            <Stat
-              label="Sem leitura"
-              value={formatInteger(withoutReading)}
-              hint="offline, falha no sensor ou sem dados"
-              tone={withoutReading > 0 ? 'falha' : undefined}
-            />
-          </>
-        ) : (
-          ['conforto', 'online', 'fora', 'meta', 'leitura'].map((key) => (
-            <Skeleton key={key} className="h-[132px] rounded-[22px]" />
-          ))
-        )}
-      </section>
-
-      <section aria-label="Lojas" className="flex flex-col gap-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-          <label className="relative flex-1">
-            <span className="sr-only">Buscar loja, cidade ou cliente</span>
-            <Icon
-              icon={Search01Icon}
-              className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-tinta-3"
-            />
-            <input
-              type="search"
-              value={searchText}
-              onChange={(event) => setSearchText(event.target.value)}
-              placeholder="Buscar loja, cidade ou cliente"
-              className="h-10 w-full rounded-[11px] bg-branco pr-3 pl-10 text-[0.92rem] text-tinta outline-none ring-1 ring-linha-forte ring-inset placeholder:text-tinta-3 focus:ring-2 focus:ring-celsius"
-            />
-          </label>
-          <select
-            aria-label="Cliente"
-            value={params.clientId ?? ''}
-            onChange={(event) => update({ cliente: event.target.value })}
-            className="h-10 rounded-[11px] bg-branco px-3 text-[0.9rem] text-tinta ring-1 ring-linha-forte ring-inset"
-          >
-            <option value="">Todos os clientes</option>
-            {clients.data?.map((client) => (
-              <option key={client.id} value={client.id}>
-                {client.name} ({client.stores})
-              </option>
-            ))}
-          </select>
-          <select
-            aria-label="Ordenar por"
-            value={params.sort}
-            onChange={(event) => update({ ordem: event.target.value })}
-            className="h-10 rounded-[11px] bg-branco px-3 text-[0.9rem] text-tinta ring-1 ring-linha-forte ring-inset"
-          >
-            {Object.entries(SORT_LABEL).map(([value, label]) => (
-              <option key={value} value={value}>
-                Ordenar: {label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <Choice
-          variant="pills"
-          label="Status da loja"
-          value={statusFilter}
-          options={STATUS_FILTERS}
-          onChange={(value) => update({ status: value === 'todas' ? null : value })}
-        />
-
-        {stores.isPending ? (
-          <div className="flex flex-col gap-3">
-            {['a', 'b', 'c', 'd'].map((key) => (
-              <Skeleton key={key} className="h-20 rounded-[22px]" />
-            ))}
-          </div>
-        ) : stores.isError ? (
-          <EmptyState title="Não foi possível carregar as lojas">
-            {(stores.error as Error).message}
-          </EmptyState>
-        ) : data && data.items.length === 0 ? (
-          <EmptyState title="Nenhuma loja encontrada">Ajuste a busca ou os filtros.</EmptyState>
-        ) : (
-          <div
-            className={clsx(
-              'flex flex-col gap-3 transition-opacity',
-              stores.isPlaceholderData && 'opacity-60',
-            )}
-          >
-            {data?.items.map((store) => (
-              <StoreCard
-                key={store.id}
-                store={store}
-                period={params.period}
-                defaultOpen={data.items.length <= 8}
-              />
-            ))}
-          </div>
-        )}
-
-        {data && data.total > 0 && (
-          <nav
-            aria-label="Paginação"
-            className="flex items-center justify-between pt-2 text-[0.88rem] text-tinta-3"
-          >
-            <span>
-              {formatInteger((data.page - 1) * data.pageSize + 1)}–
-              {formatInteger(Math.min(data.page * data.pageSize, data.total))} de {formatInteger(data.total)}{' '}
-              lojas
-            </span>
-            <span className="flex items-center gap-2">
-              <Button
-                variant="secundario"
-                className="h-9 px-3"
-                disabled={data.page <= 1}
-                onClick={() => update({ pagina: String(data.page - 1) })}
-                aria-label="Página anterior"
-              >
-                <Icon icon={ArrowLeft01Icon} />
-              </Button>
-              <span className="tabular-nums">
-                {data.page} / {pages}
-              </span>
-              <Button
-                variant="secundario"
-                className="h-9 px-3"
-                disabled={data.page >= pages}
-                onClick={() => update({ pagina: String(data.page + 1) })}
-                aria-label="Próxima página"
-              >
-                <Icon icon={ArrowRight01Icon} />
-              </Button>
-            </span>
-          </nav>
-        )}
-      </section>
     </div>
   )
 }

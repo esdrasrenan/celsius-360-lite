@@ -1,0 +1,17 @@
+/*
+ * "Imprimir ou salvar PDF" do detalhe (A4 paisagem, folha de impressão em styles.css).
+ * O canvas do gráfico guarda a largura que tinha na tela (até 1176 px, a do cartão no contêiner de
+ * 1280), e a impressão não o redimensiona. No A4 paisagem o Chrome diagrama a página com uns
+ * 1050 px; sem a margem lateral do <main> e com zoom de 0,8, o detalhe ganha uns 1310 px: o
+ * gráfico cabe inteiro, e título, KPIs e gráfico cabem na primeira página. As media queries de
+ * impressão enxergam menos que lg, por isso o arranjo de desktop vem das variantes print:.
+ * Página 1: título, metadados, KPIs e gráfico. Página 2: perfil, conforto por dia e lacunas.
+ */
+@media print {
+  main:has(.detalhe-impressao) {
+    padding: 0;
+  }
+  .detalhe-impressao {
+    zoom: 0.8;
+  }
+}

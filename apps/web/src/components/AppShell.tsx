@@ -1,94 +1,113 @@
-import { Logout03Icon } from '@hugeicons/core-free-icons'
-import { useEffect, useReducer } from 'react'
+import { clsx } from 'clsx'
+import { type ReactNode, useState } from 'react'
 import { Link, Navigate, Outlet, useLocation } from 'react-router'
 import { useLogout, useSession } from '../api/queries'
-import { formatFullDateTime } from '../lib/format'
-import { ROLE_LABEL } from '../lib/labels'
-import { useLiveState, useLiveUpdates } from '../lib/live'
-import { Button, Dot, Icon, Skeleton } from './ui'
+import { useSessionExpired } from '../api/query-client'
+import { loginPath } from '../features/auth/redirect'
+import { useLiveUpdates } from '../lib/live'
+import { ErrorState } from './ErrorState'
+import { BRAND_HOME_LABEL, BrandLockup } from './shell/BrandLockup'
+import { useScrolledPast } from './shell/hooks'
+import { LiveChip } from './shell/LiveChip'
+import { MainNav, navEntries } from './shell/MainNav'
+import { UserMenu } from './shell/UserMenu'
 
-const LIVE_WINDOW_MS = 10_000
+/**
+ * Moldura de todas as telas logadas: link de pular, cabeçalho fixo (transparente no topo, com
+ * superfície e blur depois de 8 px de rolagem) e o <main>. Também desenha o estado de espera da
+ * sessão, para o logo não pular entre a carga e a tela.
+ */
+function ShellFrame({
+  nav,
+  actions,
+  children,
+}: {
+  nav?: ReactNode
+  actions?: ReactNode
+  children?: ReactNode
+}) {
+  const [sentinel, setSentinel] = useState<HTMLSpanElement | null>(null)
+  const scrolled = useScrolledPast(sentinel)
 
-function LiveIndicator() {
-  const live = useLiveState()
-  // Rerenderiza a cada 2 s para o indicador sair de "ao vivo" quando os eventos param
-  const [, tick] = useReducer((count: number) => count + 1, 0)
-  useEffect(() => {
-    const id = setInterval(tick, 2000)
-    return () => clearInterval(id)
-  }, [])
-  const streaming = live.lastEventAt !== null && Date.now() - live.lastEventAt < LIVE_WINDOW_MS
   return (
-    <div
-      className="hidden items-center gap-2 rounded-full bg-gelo px-3 py-1.5 text-[0.8rem] text-tinta-3 ring-1 ring-linha md:flex"
-      title="Horário do último pacote processado pela ingestão: é o “agora” do sistema"
-    >
-      <Dot tone={streaming ? 'ok' : live.connected ? 'neutro' : 'falha'} pulse={streaming} />
-      {streaming ? 'Ingestão ao vivo' : live.connected ? 'Conectado' : 'Reconectando'}
-      {live.now && <span className="text-tinta">· {formatFullDateTime(live.now)}</span>}
+    <div className="relative min-h-dvh">
+      <span
+        ref={setSentinel}
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 h-2"
+      />
+      <a
+        href="#conteudo"
+        className="fixed top-2 left-2 z-50 rounded-md bg-inverso px-3.5 py-2 font-medium text-corpo text-texto-inverso shadow-flutuante not-focus:so-leitor"
+      >
+        Pular para o conteúdo
+      </a>
+      <header
+        className={clsx(
+          'nao-imprimir sticky top-0 z-20 h-cabecalho border-b transition-colors duration-150 ease-linear',
+          scrolled ? 'border-borda bg-superficie/90 backdrop-blur-md' : 'border-transparent',
+        )}
+      >
+        <div className="mx-auto flex h-full max-w-conteudo items-center gap-8 px-4 sm:px-6 lg:px-8">
+          <Link to="/" aria-label={BRAND_HOME_LABEL} className="shrink-0 rounded-sm">
+            <BrandLockup />
+          </Link>
+          {nav}
+          <div className="ms-auto flex items-center gap-2 sm:gap-3">{actions}</div>
+        </div>
+      </header>
+      <main
+        id="conteudo"
+        tabIndex={-1}
+        className="mx-auto max-w-conteudo px-4 pt-6 pb-16 outline-none sm:px-6 md:pt-8 lg:px-8"
+      >
+        {children}
+      </main>
     </div>
   )
 }
 
 export function AppShell() {
   const session = useSession()
+  const expired = useSessionExpired()
   const logout = useLogout()
   const location = useLocation()
+  // Sair é escolha do usuário: vai para /entrar sem "voltar", e o próximo perfil começa na rede
+  const [leaving, setLeaving] = useState(false)
   useLiveUpdates(!!session.data)
 
-  if (session.isPending) {
-    return (
-      <div className="mx-auto max-w-[1280px] px-5 py-10">
-        <Skeleton className="h-10 w-64" />
-      </div>
-    )
+  if (session.isPending) return <ShellFrame />
+
+  if (!session.data) {
+    if (session.isError) {
+      return (
+        <ShellFrame>
+          <ErrorState error={session.error} heading="h1" onRetry={() => session.refetch()} />
+        </ShellFrame>
+      )
+    }
+    const to = leaving ? '/entrar' : loginPath(location.pathname + location.search, expired)
+    return <Navigate to={to} replace />
   }
-  if (!session.data)
-    return (
-      <Navigate to={`/entrar?voltar=${encodeURIComponent(location.pathname + location.search)}`} replace />
-    )
 
   const user = session.data
-  const initials = user.name
-    .split(' ')
-    .map((part) => part[0])
-    .slice(0, 2)
-    .join('')
+  const nav = navEntries(user.role)
+  const signOut = () => {
+    setLeaving(true)
+    logout.mutate()
+  }
 
   return (
-    <div className="min-h-dvh">
-      <header className="sticky top-0 z-20 border-linha border-b bg-white/88 backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-[1280px] items-center gap-4 px-5 md:px-8">
-          <Link to="/" className="flex items-center gap-3" aria-label="Visão da rede">
-            <img src="/marca/diel-logotipo.svg" alt="Diel Energia" className="h-7 w-auto" />
-            <span className="h-6 w-px bg-linha-forte" />
-            <img src="/marca/celsius-360.svg" alt="Celsius 360" className="h-[18px] w-auto" />
-          </Link>
-          <div className="ml-auto flex items-center gap-3">
-            <LiveIndicator />
-            <div className="flex items-center gap-2.5">
-              <span className="grid size-9 place-items-center rounded-full bg-tinta font-semibold text-[0.8rem] text-white">
-                {initials}
-              </span>
-              <span className="hidden flex-col leading-tight sm:flex">
-                <span className="font-medium text-[0.86rem] text-tinta">{user.name}</span>
-                <span className="text-[0.76rem] text-tinta-3">{ROLE_LABEL[user.role]}</span>
-              </span>
-            </div>
-            <Button
-              variant="fantasma"
-              onClick={() => logout.mutate()}
-              aria-label="Sair"
-              className="h-9 px-2.5"
-            >
-              <Icon icon={Logout03Icon} />
-            </Button>
-          </div>
-        </div>
-      </header>
-      <main className="mx-auto max-w-[1280px] px-5 pt-8 pb-16 md:px-8">
-        <Outlet />
-      </main>
-    </div>
+    <ShellFrame
+      nav={<MainNav entries={nav} />}
+      actions={
+        <>
+          <LiveChip />
+          <UserMenu user={user} nav={nav} onLogout={signOut} />
+        </>
+      }
+    >
+      <Outlet />
+    </ShellFrame>
   )
 }

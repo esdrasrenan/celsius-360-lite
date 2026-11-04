@@ -1,47 +1,56 @@
 import './styles.css'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClientProvider } from '@tanstack/react-query'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { createBrowserRouter, Link, RouterProvider } from 'react-router'
-import { ApiError } from './api/client'
+import { createBrowserRouter, RouterProvider } from 'react-router'
+import { createQueryClient } from './api/query-client'
 import { AppShell } from './components/AppShell'
-import { EmptyState } from './components/ui'
+import { HintProvider } from './components/Hint'
 import { LoginPage } from './features/auth/LoginPage'
+import { NotFoundPage } from './features/errors/NotFoundPage'
+import { RouteError } from './features/errors/RouteError'
 import { NetworkPage } from './features/network/NetworkPage'
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 15_000,
-      refetchOnWindowFocus: false,
-      // Erro de sessão ou de permissão não melhora com nova tentativa
-      retry: (count, error) => !(error instanceof ApiError && error.status < 500) && count < 2,
-    },
-  },
-})
+// 401 global: zera a sessão, marca a expiração e a casca leva ao login (api/query-client.ts)
+const queryClient = createQueryClient()
+
+// Vitrine dos componentes: só no dev server; o build de produção nem chega a gerar o chunk
+const devRoutes = import.meta.env.DEV
+  ? [{ path: '/_componentes', lazy: () => import('./components/showcase/Showcase') }]
+  : []
 
 const router = createBrowserRouter([
-  { path: '/entrar', element: <LoginPage /> },
   {
-    element: <AppShell />,
+    // Raiz: erro no login ou na própria casca vira a página da marca, nunca a pilha crua
+    errorElement: <RouteError />,
     children: [
-      { path: '/', element: <NetworkPage /> },
+      ...devRoutes,
+      { path: '/entrar', element: <LoginPage /> },
       {
-        // O detalhe carrega sob demanda: o ECharts só é baixado quando um ambiente é aberto
-        path: '/ambientes/:id',
-        lazy: async () => ({
-          Component: (await import('./features/environment/EnvironmentPage')).EnvironmentPage,
-        }),
-      },
-      {
-        path: '*',
-        element: (
-          <EmptyState title="Página não encontrada">
-            <Link to="/" className="font-medium text-celsius">
-              Ir para a visão da rede
-            </Link>
-          </EmptyState>
-        ),
+        element: <AppShell />,
+        children: [
+          {
+            // Casca: erro numa tela aparece dentro do cabeçalho, que continua navegável
+            errorElement: <RouteError inShell />,
+            children: [
+              { path: '/', element: <NetworkPage /> },
+              {
+                // Detalhe e qualidade carregam sob demanda: o ECharts só desce quando um ambiente abre
+                path: '/ambientes/:id',
+                lazy: async () => ({
+                  Component: (await import('./features/environment/EnvironmentPage')).EnvironmentPage,
+                }),
+              },
+              {
+                path: '/qualidade',
+                lazy: async () => ({
+                  Component: (await import('./features/quality/QualityPage')).QualityPage,
+                }),
+              },
+              { path: '*', element: <NotFoundPage /> },
+            ],
+          },
+        ],
       },
     ],
   },
@@ -50,7 +59,9 @@ const router = createBrowserRouter([
 createRoot(document.getElementById('root') as HTMLElement).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
+      <HintProvider>
+        <RouterProvider router={router} />
+      </HintProvider>
     </QueryClientProvider>
   </StrictMode>,
 )
