@@ -1,7 +1,15 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { resolve } from 'node:path'
-import { comfortIndicator, deviceStatus, storeStatus } from '@celsius/domain'
+import {
+  comfortIndicator,
+  type DeviceStatus,
+  deviceStatus,
+  type PeriodKey,
+  type Situation,
+  storeStatus,
+} from '@celsius/domain'
 import { percentile } from '../src/jobs/synthetic-network'
+import { storeSnapshotRows } from '../src/pipeline/projections'
 import { loadEnvironments, SYNTHETIC_CLIENT_ID } from '../src/registry'
 import { createTestEnvironment, type TestEnvironment } from './support'
 
@@ -111,22 +119,11 @@ describe('rede sintética', () => {
       env_sensor_fault: number
       env_offline: number
       env_no_data: number
-      samples_in_hours: number
-      samples_within: number
-      comfort_pct: number | null
     }>("SELECT * FROM state.store_snapshot WHERE store_id LIKE 'LOJA-SINT-%' AND period = '7d'")
     for (const store of stores) {
       const statuses = environments.filter((row) => row.store_id === store.store_id).map((row) => row.status)
       expect(store.status).toBe(storeStatus(statuses as Parameters<typeof storeStatus>[0]))
       expect(store.env_online + store.env_sensor_fault + store.env_offline + store.env_no_data).toBe(6)
-      const expected = comfortIndicator({
-        inHours: store.samples_in_hours,
-        within: store.samples_within,
-        above: 0,
-        below: 0,
-        expected: 0,
-      })
-      expect(store.comfort_pct).toBeCloseTo(expected.comfortPct ?? Number.NaN, 2)
     }
 
     // Colunas do modelo de leitura da visão da rede: pior ambiente, abertos agora, acima e abaixo
@@ -142,6 +139,73 @@ describe('rede sintética', () => {
                                                   WHERE e.store_id = ss.store_id AND ei.period = ss.period))`,
     )
     expect(mismatches[0]?.count).toBe(0)
+  })
+
+  test('o resumo de cada loja é o que a projeção da ingestão calcula a partir dos ambientes gravados', async () => {
+    const { rows: environments } = await env.pool.query<{
+      id: string
+      store_id: string
+      status: DeviceStatus
+      situation: Situation
+      open_now: boolean
+      next_open_at: Date | null
+      now_ts: Date
+    }>(
+      `SELECT e.id, e.store_id, es.status, es.situation, es.open_now, es.next_open_at, es.now_ts
+       FROM registry.environment e JOIN state.environment_snapshot es ON es.environment_id = e.id
+       WHERE e.id LIKE 'AMB-SINT-%'`,
+    )
+    const { rows: indicators } = await env.pool.query<{
+      environment_id: string
+      period: PeriodKey
+      in_hours: number
+      within: number
+      above: number
+      below: number
+      expected: number
+    }>(
+      `SELECT environment_id, period, samples_in_hours AS in_hours, samples_within AS within,
+         samples_above AS above, samples_below AS below, samples_expected AS expected
+       FROM state.environment_indicator WHERE environment_id LIKE 'AMB-SINT-%'`,
+    )
+    const byEnvironment = Map.groupBy(indicators, (row) => row.environment_id)
+    const now = environments[0]?.now_ts.getTime() ?? 0
+    const projected = [...Map.groupBy(environments, (row) => row.store_id)].flatMap(([storeId, list]) =>
+      storeSnapshotRows(
+        storeId,
+        list.map((row) => ({
+          environmentId: row.id,
+          status: row.status,
+          situation: row.situation,
+          openNow: row.open_now,
+          nextOpenAt: row.next_open_at?.getTime() ?? null,
+          indicators: new Map(
+            (byEnvironment.get(row.id) ?? []).map(({ period, in_hours, within, above, below, expected }) => {
+              const counts = { inHours: in_hours, within, above, below, expected }
+              return [period, { counts, indicator: comfortIndicator(counts) }]
+            }),
+          ),
+        })),
+        now,
+      ),
+    )
+    const columns = Object.keys(projected[0] ?? {})
+    const { rows: stored } = await env.pool.query<Record<string, unknown>>(
+      `SELECT ${columns.join(', ')} FROM state.store_snapshot WHERE store_id LIKE 'LOJA-SINT-%'`,
+    )
+    const normalized = (rows: Array<Record<string, unknown>>) =>
+      rows
+        .map((row) =>
+          Object.fromEntries(
+            Object.entries(row).map(([key, value]) => [
+              key,
+              value instanceof Date ? value.toISOString() : value,
+            ]),
+          ),
+        )
+        .sort((a, b) => `${a.store_id}${a.period}`.localeCompare(`${b.store_id}${b.period}`))
+    expect(projected).toHaveLength(90)
+    expect(normalized(stored)).toEqual(normalized(projected))
   })
 
   test('não toca no conjunto real, e a ingestão continua ignorando as lojas sintéticas', async () => {

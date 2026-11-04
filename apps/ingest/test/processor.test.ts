@@ -75,17 +75,34 @@ describe('"agora" da ingestão', () => {
     expect(batch.unknownDevices.has('IOT099')).toBe(true)
   })
 
-  test('quando a frota volta junta de uma interrupção, o salto é confirmado pelo segundo dispositivo', () => {
+  test('quando a frota volta junta de uma interrupção, o salto precisa do quórum de dois outros', () => {
     const { processor, send } = fleet('IOT001', 'IOT002', 'IOT003')
     send(packet('IOT001', t0))
     send(packet('IOT002', t0))
     send(packet('IOT003', t0))
     const back = t0 + 90 * minute
     expect(send(packet('IOT001', back)).stats.future).toBe(1)
-    expect(send(packet('IOT002', back + 5_000)).readings).toHaveLength(12)
+    expect(send(packet('IOT002', back + 5_000)).stats.future).toBe(1)
     expect(send(packet('IOT003', back + 9_000)).readings).toHaveLength(12)
     expect(send(packet('IOT001', back + 6 * minute)).readings).toHaveLength(12)
-    expect(processor.currentNow).toBe(back + 6 * minute)
+    expect(send(packet('IOT002', back + 6 * minute + 5_000)).readings).toHaveLength(12)
+    expect(processor.currentNow).toBe(back + 6 * minute + 5_000)
+  })
+
+  test('dois relógios errados da mesma loja não adiantam o agora, e o resto da frota segue online', () => {
+    const ids = Array.from({ length: 25 }, (_, index) => `IOT${String(index + 1).padStart(3, '0')}`)
+    const { processor, devices, send } = fleet(...ids)
+    for (const [index, id] of ids.entries()) send(packet(id, t0 + index * 10_000))
+    // Horário local certo, mas GMT -6 no lugar de -3 nos dois dispositivos: 3 h à frente em UTC
+    for (const id of ['IOT024', 'IOT025']) {
+      expect(send(packet(id, t0 + 6 * minute + 3 * 3_600_000, 23, -6)).stats.future).toBe(1)
+    }
+    for (const [index, id] of ids.slice(0, 23).entries()) send(packet(id, t0 + 6 * minute + index * 10_000))
+
+    expect(processor.currentNow).toBe(t0 + 6 * minute + 22 * 10_000)
+    for (const id of ids.slice(0, 23)) {
+      expect(deviceStatus(devices.get(id) ?? null, processor.currentNow ?? 0)).toBe('online')
+    }
   })
 })
 

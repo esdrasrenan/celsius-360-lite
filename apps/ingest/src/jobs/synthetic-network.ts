@@ -1,5 +1,4 @@
 import {
-  COMFORT_TARGET_PCT,
   type ComfortCounts,
   type ComfortIndicator,
   type ComfortRange,
@@ -16,13 +15,11 @@ import {
   type PeriodKey,
   periodRange,
   type Situation,
-  STORE_STATUS_RANK,
   situationNow,
-  storeStatus,
-  sumCounts,
 } from '@celsius/domain'
 import type pg from 'pg'
 import type { Config } from '../config'
+import { type EnvironmentProjection, storeSnapshotRows, upsertStoreSnapshots } from '../pipeline/projections'
 import { SYNTHETIC_CLIENT_ID } from '../registry'
 
 /**
@@ -230,6 +227,17 @@ function buildNetwork(total: number, now: number): Store[] {
   })
 }
 
+const projection = (environment: Environment): EnvironmentProjection => ({
+  environmentId: environment.id,
+  status: environment.status,
+  situation: environment.situation,
+  openNow: environment.openNow,
+  nextOpenAt: environment.nextOpenAt,
+  indicators: new Map(
+    environment.indicators.map((item) => [item.period, { counts: item.counts, indicator: item.result }]),
+  ),
+})
+
 /** INSERT em lote por unnest: um array por coluna, cada um com o tipo do Postgres. */
 async function insertRows<T>(
   client: pg.PoolClient,
@@ -299,49 +307,10 @@ export async function createSyntheticNetwork(pool: pg.Pool, total: number) {
   const indicators = environments.flatMap((environment) =>
     environment.indicators.map((indicator) => ({ environment, indicator })),
   )
-  // Resumo da loja como a projeção da ingestão o calcula (Projector.writeStoreSnapshots)
-  const snapshots = stores.flatMap((store) => {
-    const list = store.environments
-    const count = (predicate: (environment: Environment) => boolean) => list.filter(predicate).length
-    const status = storeStatus(list.map((environment) => environment.status))
-    const openNow = count((environment) => environment.openNow)
-    const nextOpenings = list.flatMap((environment) =>
-      environment.nextOpenAt === null ? [] : [environment.nextOpenAt],
-    )
-    return PERIOD_KEYS.map((period) => {
-      const ofPeriod = list.map((environment) => ({
-        environment,
-        indicator: environment.indicators.find((indicator) => indicator.period === period) as Indicator,
-      }))
-      const counts = sumCounts(ofPeriod.map(({ indicator }) => indicator.counts))
-      const comfort = (item: (typeof ofPeriod)[number]) =>
-        item.indicator.result.comfortPct ?? Number.POSITIVE_INFINITY
-      const [worst] = ofPeriod
-        .filter((item) => item.indicator.result.comfortPct !== null)
-        .sort((a, b) => comfort(a) - comfort(b) || a.environment.id.localeCompare(b.environment.id))
-      return {
-        store,
-        period,
-        status,
-        counts,
-        result: comfortIndicator(counts),
-        online: count((environment) => environment.status === 'online'),
-        sensorFault: count((environment) => environment.status === 'sensor_fault'),
-        offline: count((environment) => environment.status === 'offline'),
-        noData: count((environment) => environment.status === 'no_data'),
-        above: count((environment) => environment.situation === 'above'),
-        below: count((environment) => environment.situation === 'below'),
-        openNow,
-        belowTarget: ofPeriod.filter(({ indicator }) => {
-          const pct = indicator.result.comfortPct
-          return pct !== null && pct < COMFORT_TARGET_PCT
-        }).length,
-        // A loja só "abre às ..." quando todos os ambientes estão fechados
-        nextOpenAt: openNow > 0 || nextOpenings.length === 0 ? null : Math.min(...nextOpenings),
-        worst: worst ? { id: worst.environment.id, comfortPct: worst.indicator.result.comfortPct } : null,
-      }
-    })
-  })
+  // Mesma função da projeção da ingestão: uma mudança de regra vale também para a rede sintética
+  const snapshots = stores.flatMap((store) =>
+    storeSnapshotRows(store.id, store.environments.map(projection), now),
+  )
   const reporting = environments.filter((environment) => environment.contactAt !== null)
 
   const client = await pool.connect()
@@ -413,35 +382,7 @@ export async function createSyntheticNetwork(pool: pg.Pool, total: number) {
       below_pct: ['real', (row) => row.indicator.result.belowPct],
       coverage_pct: ['real', (row) => row.indicator.result.coveragePct],
     })
-    await insertRows(client, 'state.store_snapshot', snapshots, {
-      store_id: ['text', (row) => row.store.id],
-      period: ['text', (row) => row.period],
-      status: ['text', (row) => row.status],
-      status_rank: ['smallint', (row) => STORE_STATUS_RANK[row.status]],
-      environments: ['int', (row) => row.store.environments.length],
-      env_online: ['int', (row) => row.online],
-      env_sensor_fault: ['int', (row) => row.sensorFault],
-      env_offline: ['int', (row) => row.offline],
-      env_no_data: ['int', (row) => row.noData],
-      env_out_of_range: ['int', (row) => row.above + row.below],
-      env_above: ['int', (row) => row.above],
-      env_below: ['int', (row) => row.below],
-      env_open_now: ['int', (row) => row.openNow],
-      env_below_target: ['int', (row) => row.belowTarget],
-      samples_in_hours: ['int', (row) => row.counts.inHours],
-      samples_within: ['int', (row) => row.counts.within],
-      samples_above: ['int', (row) => row.counts.above],
-      samples_below: ['int', (row) => row.counts.below],
-      samples_expected: ['int', (row) => row.counts.expected],
-      comfort_pct: ['real', (row) => row.result.comfortPct],
-      above_pct: ['real', (row) => row.result.abovePct],
-      below_pct: ['real', (row) => row.result.belowPct],
-      coverage_pct: ['real', (row) => row.result.coveragePct],
-      next_open_at: ['timestamptz', (row) => iso(row.nextOpenAt)],
-      worst_env_id: ['text', (row) => row.worst?.id ?? null],
-      worst_env_comfort: ['real', (row) => row.worst?.comfortPct ?? null],
-      now_ts: ['timestamptz', () => iso(now)],
-    })
+    await upsertStoreSnapshots(client, snapshots)
     await client.query('COMMIT')
   } catch (error) {
     await client.query('ROLLBACK')

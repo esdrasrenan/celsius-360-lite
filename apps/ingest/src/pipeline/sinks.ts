@@ -2,8 +2,6 @@ import type { ClickHouseClient } from '@clickhouse/client'
 import type pg from 'pg'
 import type { Batch, DeviceMemory, RawRow } from './processor'
 
-export const EVENTS_CHANNEL = 'celsius_events'
-
 const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString())
 
 /**

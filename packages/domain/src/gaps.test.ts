@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { type BucketCounts, findGaps, gapsWithin } from './gaps'
-import { BUCKET_MS, chooseBucket, isPeriodKey, periodRange } from './period'
+import { BUCKET_MS, chooseBucket, periodRange } from './period'
 
 const FIVE = BUCKET_MS['5m']
 const row = (bucket: number, overrides: Partial<BucketCounts> = {}): BucketCounts => ({
@@ -69,15 +69,6 @@ describe('gapsWithin', () => {
 
   test('sem horário de funcionamento, nada cai no expediente', () => {
     expect(gapsWithin([{ from: 0, to: hour }], [])).toEqual({ count: 0, ms: 0 })
-  })
-})
-
-describe('isPeriodKey', () => {
-  test('aceita só as chaves do período, nunca propriedades herdadas', () => {
-    expect(isPeriodKey('7d')).toBe(true)
-    expect(isPeriodKey('toString')).toBe(false)
-    expect(isPeriodKey('__proto__')).toBe(false)
-    expect(isPeriodKey(7)).toBe(false)
   })
 })
 

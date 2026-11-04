@@ -8,14 +8,6 @@ export const Quality = {
 
 export type QualityCode = (typeof Quality)[keyof typeof Quality]
 
-export const QUALITY_LABEL: Record<QualityCode, string> = {
-  0: 'válida',
-  1: 'código de erro do sensor',
-  2: 'fora da faixa física',
-  3: 'pico isolado',
-  4: 'sensor travado',
-}
-
 /**
  * Códigos que o sensor (DS18B20) devolve em falha: -127 quando desconectado e 85 no
  * power-on, que nos dados aparece como primeira amostra depois de cada reinício.

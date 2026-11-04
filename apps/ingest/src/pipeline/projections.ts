@@ -5,6 +5,7 @@ import {
   comfortIndicator,
   type DeviceStatus,
   deviceStatus,
+  EVENTS_CHANNEL,
   EXPECTED_SAMPLING_MS,
   isOpenAt,
   nextOpenAt,
@@ -22,7 +23,6 @@ import {
 import type pg from 'pg'
 import type { EnvironmentContext } from '../registry'
 import type { DeviceMemory } from './processor'
-import { EVENTS_CHANNEL } from './sinks'
 
 const VIEW_BY_BUCKET = {
   '5m': 'telemetry.reading_5m',
@@ -42,12 +42,18 @@ interface PeriodRow {
   value_max: number | null
 }
 
-interface EnvironmentView {
-  context: EnvironmentContext
+/** O que o resumo da loja usa de cada ambiente; a rede sintética monta o mesmo formato. */
+export interface EnvironmentProjection {
+  environmentId: string
   status: DeviceStatus
   situation: Situation
   openNow: boolean
   nextOpenAt: number | null
+  indicators: ReadonlyMap<PeriodKey, { counts: ComfortCounts; indicator: ComfortIndicator }>
+}
+
+interface EnvironmentView extends EnvironmentProjection {
+  context: EnvironmentContext
   indicators: Map<PeriodKey, { counts: ComfortCounts; indicator: ComfortIndicator }>
 }
 
@@ -145,6 +151,7 @@ export class Projector {
         openNow,
       })
       views.set(context.environmentId, {
+        environmentId: context.environmentId,
         context,
         status,
         situation,
@@ -265,55 +272,69 @@ export class Projector {
 
   private async writeStoreSnapshots(client: pg.PoolClient, views: Map<string, EnvironmentView>, now: number) {
     const byStore = Map.groupBy(views.values(), (view) => view.context.storeId)
-
-    const rows = [...byStore.entries()].flatMap(([storeId, list]) => {
-      const status = storeStatus(list.map((view) => view.status))
-      const count = (predicate: (view: EnvironmentView) => boolean) => list.filter(predicate).length
-      const openNow = count((view) => view.openNow)
-      const nextOpenings = list.flatMap((view) => (view.nextOpenAt === null ? [] : [view.nextOpenAt]))
-
-      return PERIOD_KEYS.map((period) => {
-        const counts = sumCounts(list.map((view) => view.indicators.get(period)?.counts ?? emptyCounts))
-        const indicator = comfortIndicator(counts)
-        const worst = worstEnvironment(list, period)
-        return {
-          store_id: storeId,
-          period,
-          status,
-          status_rank: STORE_STATUS_RANK[status],
-          environments: list.length,
-          env_online: count((view) => view.status === 'online'),
-          env_sensor_fault: count((view) => view.status === 'sensor_fault'),
-          env_offline: count((view) => view.status === 'offline'),
-          env_no_data: count((view) => view.status === 'no_data'),
-          env_out_of_range: count((view) => view.situation === 'above' || view.situation === 'below'),
-          env_above: count((view) => view.situation === 'above'),
-          env_below: count((view) => view.situation === 'below'),
-          env_open_now: openNow,
-          env_below_target: count((view) => {
-            const pct = view.indicators.get(period)?.indicator.comfortPct
-            return pct != null && pct < COMFORT_TARGET_PCT
-          }),
-          samples_in_hours: counts.inHours,
-          samples_within: counts.within,
-          samples_above: counts.above,
-          samples_below: counts.below,
-          samples_expected: counts.expected,
-          comfort_pct: indicator.comfortPct,
-          above_pct: indicator.abovePct,
-          below_pct: indicator.belowPct,
-          coverage_pct: indicator.coveragePct,
-          // A loja só "abre às ..." quando todos os ambientes estão fechados
-          next_open_at: openNow > 0 || nextOpenings.length === 0 ? null : iso(Math.min(...nextOpenings)),
-          worst_env_id: worst?.environmentId ?? null,
-          worst_env_comfort: worst?.comfortPct ?? null,
-          now_ts: iso(now),
-        }
-      })
-    })
-    await upsert(client, 'state.store_snapshot', ['store_id', 'period'], STORE_SNAPSHOT, rows)
+    const rows = [...byStore].flatMap(([storeId, list]) => storeSnapshotRows(storeId, list, now))
+    await upsertStoreSnapshots(client, rows)
   }
 }
+
+export type StoreSnapshotRow = Record<keyof typeof STORE_SNAPSHOT, unknown>
+
+/**
+ * Resumo da loja nos três períodos (state.store_snapshot), a partir dos ambientes dela. Função pura:
+ * a rede sintética usa a mesma, então uma mudança de regra vale para as duas.
+ */
+export function storeSnapshotRows(
+  storeId: string,
+  list: readonly EnvironmentProjection[],
+  now: number,
+): StoreSnapshotRow[] {
+  const status = storeStatus(list.map((view) => view.status))
+  const count = (predicate: (view: EnvironmentProjection) => boolean) => list.filter(predicate).length
+  const openNow = count((view) => view.openNow)
+  const nextOpenings = list.flatMap((view) => (view.nextOpenAt === null ? [] : [view.nextOpenAt]))
+
+  return PERIOD_KEYS.map((period) => {
+    const counts = sumCounts(list.map((view) => view.indicators.get(period)?.counts ?? emptyCounts))
+    const indicator = comfortIndicator(counts)
+    const worst = worstEnvironment(list, period)
+    return {
+      store_id: storeId,
+      period,
+      status,
+      status_rank: STORE_STATUS_RANK[status],
+      environments: list.length,
+      env_online: count((view) => view.status === 'online'),
+      env_sensor_fault: count((view) => view.status === 'sensor_fault'),
+      env_offline: count((view) => view.status === 'offline'),
+      env_no_data: count((view) => view.status === 'no_data'),
+      env_out_of_range: count((view) => view.situation === 'above' || view.situation === 'below'),
+      env_above: count((view) => view.situation === 'above'),
+      env_below: count((view) => view.situation === 'below'),
+      env_open_now: openNow,
+      env_below_target: count((view) => {
+        const pct = view.indicators.get(period)?.indicator.comfortPct
+        return pct != null && pct < COMFORT_TARGET_PCT
+      }),
+      samples_in_hours: counts.inHours,
+      samples_within: counts.within,
+      samples_above: counts.above,
+      samples_below: counts.below,
+      samples_expected: counts.expected,
+      comfort_pct: indicator.comfortPct,
+      above_pct: indicator.abovePct,
+      below_pct: indicator.belowPct,
+      coverage_pct: indicator.coveragePct,
+      // A loja só "abre às ..." quando todos os ambientes estão fechados
+      next_open_at: openNow > 0 || nextOpenings.length === 0 ? null : iso(Math.min(...nextOpenings)),
+      worst_env_id: worst?.environmentId ?? null,
+      worst_env_comfort: worst?.comfortPct ?? null,
+      now_ts: iso(now),
+    }
+  })
+}
+
+export const upsertStoreSnapshots = (client: pg.PoolClient, rows: readonly StoreSnapshotRow[]) =>
+  upsert(client, 'state.store_snapshot', ['store_id', 'period'], STORE_SNAPSHOT, rows)
 
 /**
  * Grava as linhas num comando só: vão como um parâmetro JSON e viram registros com
@@ -343,12 +364,12 @@ async function upsert<C extends Record<string, string>>(
 }
 
 /** Ambiente de menor conforto no período, entre os que têm conforto definido (desempate pelo id). */
-function worstEnvironment(list: readonly EnvironmentView[], period: PeriodKey) {
+function worstEnvironment(list: readonly EnvironmentProjection[], period: PeriodKey) {
   let worst: { environmentId: string; comfortPct: number } | null = null
   for (const view of list) {
     const comfortPct = view.indicators.get(period)?.indicator.comfortPct
     if (comfortPct == null) continue
-    const environmentId = view.context.environmentId
+    const environmentId = view.environmentId
     if (
       !worst ||
       comfortPct < worst.comfortPct ||

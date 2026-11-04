@@ -55,11 +55,20 @@ export async function buildQualityReport(
     clickhouse,
     `SELECT count() AS total, countIf(NOT valid AND error != 'timestamp_futuro') AS invalid,
             countIf(saved_data) AS saved_data,
-            uniqExactIf(device_id, valid) AS devices,
-            sum(arrayCount(x -> x = -127, samples)) AS code_minus_127,
-            sum(arrayCount(x -> x = 85, samples)) AS code_85,
-            countIf(valid AND length(samples) > 0 AND samples[1] = 85) AS reboots
+            uniqExactIf(device_id, valid) AS devices
      FROM raw.telemetry_packet FINAL WHERE source = {source:String}`,
+    params,
+  )
+  // Códigos e reinícios sobre pacotes únicos: a duplicata exata é a mesma leitura chegando de novo,
+  // e a série (onde a primeira gravação vence) a conta uma vez só
+  const [codes] = await rows<Record<string, unknown>>(
+    clickhouse,
+    `SELECT sum(arrayCount(x -> x = -127, samples)) AS code_minus_127,
+            sum(arrayCount(x -> x = 85, samples)) AS code_85,
+            countIf(length(samples) > 0 AND samples[1] = 85) AS reboots
+     FROM (SELECT any(samples) AS samples FROM raw.telemetry_packet FINAL
+           WHERE source = {source:String} AND valid AND device_id IN {known:Array(String)}
+           GROUP BY device_id, sent_at, payload_hash)`,
     params,
   )
   const [duplicates] = await rows<Record<string, unknown>>(
@@ -212,7 +221,7 @@ export async function buildQualityReport(
         from: isoFromClickHouse(row.first),
         to: isoFromClickHouse(row.last),
       })),
-      reboots: num(packets?.reboots),
+      reboots: num(codes?.reboots),
     },
     samples: {
       total: totalSamples,
@@ -221,7 +230,7 @@ export async function buildQualityReport(
       outOfRange: byQuality.get(Quality.OutOfRange) ?? 0,
       spike: byQuality.get(Quality.Spike) ?? 0,
       stuck: byQuality.get(Quality.Stuck) ?? 0,
-      rawErrorCodes: { minus127: num(packets?.code_minus_127), plus85: num(packets?.code_85) },
+      rawErrorCodes: { minus127: num(codes?.code_minus_127), plus85: num(codes?.code_85) },
     },
     stuckEpisodes,
     gaps: gaps.sort((a, b) => a.from.localeCompare(b.from)),

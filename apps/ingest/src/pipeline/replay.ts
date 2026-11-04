@@ -60,11 +60,19 @@ async function loadDeviceMemory(pool: pg.Pool): Promise<Map<string, DeviceMemory
 
 /** Ao retomar de um checkpoint, reconstrói a sequência de valores idênticos em curso de cada dispositivo. */
 async function restoreStuckRuns(pool: pg.Pool, processor: TelemetryProcessor) {
+  // Uma busca por dispositivo, com o limite de tempo dele: o índice (device_id, ts) é usado e os
+  // chunks antigos ficam de fora. Com um JOIN, a série inteira era lida a cada retomada. O ORDER BY
+  // interno impede o planejador de desfazer o LATERAL num JOIN comum.
   const { rows } = await pool.query<{ device_id: string; ts: Date; value: number; quality: number }>(
-    `SELECT r.device_id, r.ts, r.value, r.quality
-     FROM telemetry.reading r JOIN state.device d ON d.device_id = r.device_id
-     WHERE r.quality IN (${Quality.Ok}, ${Quality.Stuck}) AND r.ts > d.last_sample_at - interval '3 hours'
-     ORDER BY r.device_id, r.ts DESC`,
+    `SELECT d.device_id, r.ts, r.value, r.quality
+     FROM state.device d
+     CROSS JOIN LATERAL (
+       SELECT ts, value, quality FROM telemetry.reading
+       WHERE device_id = d.device_id AND quality IN (${Quality.Ok}, ${Quality.Stuck})
+         AND ts > d.last_sample_at - interval '3 hours'
+       ORDER BY ts DESC
+     ) r
+     ORDER BY d.device_id, r.ts DESC`,
   )
   const byDevice = Map.groupBy(rows, (row) => row.device_id)
   for (const [deviceId, recent] of byDevice) {
@@ -124,6 +132,8 @@ export async function replay(deps: Deps, config: Config, options: ReplayOptions)
   const rawHighWaterMark = await rawSink.init()
   const seriesSink = new SeriesSink(pool)
   const aggregates = new AggregateRefresher(pool)
+  // Uma queda entre o lote e a atualização deixa trecho sem materializar: recupera antes de seguir
+  await aggregates.catchUp()
   const projector = new Projector(pool, environments)
 
   logger.info(

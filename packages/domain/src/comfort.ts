@@ -18,6 +18,12 @@ export const COMFORT_TARGET_PCT = 90
 /** Abaixo deste conforto o ambiente é crítico (tom de alerta forte na interface). */
 export const COMFORT_CRITICAL_PCT = 70
 
+/**
+ * Cobertura mínima do horário de funcionamento: abaixo dela a interface avisa que o conforto se
+ * apoia em pouca leitura. Regra própria, que só coincide em número com a meta de conforto.
+ */
+export const COVERAGE_MIN_PCT = 90
+
 /** Intervalo nominal entre amostras, usado para estimar quantas amostras eram esperadas no horário. */
 export const EXPECTED_SAMPLING_MS = 30_000
 

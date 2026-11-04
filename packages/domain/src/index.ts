@@ -1,4 +1,5 @@
 export * from './comfort'
+export * from './events'
 export * from './gaps'
 export * from './packet'
 export * from './period'

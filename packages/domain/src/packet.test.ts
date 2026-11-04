@@ -120,6 +120,43 @@ describe('FleetClock', () => {
     expect(clock.accept('IOT003', back + 30_000)).toBe(true)
   })
 
+  describe('numa frota de 25 dispositivos ativos', () => {
+    const ids = Array.from({ length: 25 }, (_, index) => `IOT${String(index + 1).padStart(3, '0')}`)
+    const back = t0 + 90 * minute
+    const active = () => {
+      const clock = new FleetClock(ids.length)
+      for (const [index, id] of ids.entries()) clock.accept(id, t0 + index * 10_000)
+      return clock
+    }
+
+    test('dois relógios errados da mesma loja não confirmam um ao outro', () => {
+      const clock = active()
+      // GMT -6 no lugar de -3 nos dois: 3 h à frente
+      expect(clock.accept('IOT024', t0 + 3 * 60 * minute)).toBe(false)
+      expect(clock.accept('IOT025', t0 + 3 * 60 * minute + 5_000)).toBe(false)
+      expect(clock.now).toBe(t0 + 24 * 10_000)
+      expect(clock.accept('IOT001', t0 + 6 * minute)).toBe(true)
+    })
+
+    test('a frota voltando de uma interrupção salta quando 20% dos ativos (5) confirmam', () => {
+      const clock = active()
+      const answers = ids.slice(0, 7).map((id, index) => clock.accept(id, back + index * 5_000))
+      expect(answers).toEqual([false, false, false, false, false, true, true])
+      expect(clock.now).toBe(back + 6 * 5_000)
+    })
+
+    test('se só dois voltam, o agora volta a andar depois do dobro do quórum em recusas seguidas', () => {
+      const clock = active()
+      const answers: boolean[] = []
+      for (let round = 0; round < 6; round++) {
+        answers.push(clock.accept('IOT001', back + round * 6 * minute))
+        answers.push(clock.accept('IOT002', back + round * 6 * minute + 5_000))
+      }
+      expect(answers.indexOf(true)).toBe(10)
+      expect(answers.slice(10)).toEqual([true, true])
+    })
+  })
+
   test('com um único dispositivo cadastrado vale o maior horário', () => {
     const clock = new FleetClock(1, t0)
     expect(clock.accept('IOT001', t0 + 60 * minute)).toBe(true)

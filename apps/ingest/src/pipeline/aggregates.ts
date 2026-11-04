@@ -27,21 +27,35 @@ export class AggregateRefresher {
       : { ...range }
   }
 
-  get hasPending(): boolean {
-    return this.pending !== null
+  async flush(): Promise<void> {
+    const range = this.pending
+    if (!range) return
+    const from = Math.floor(range.from / HOUR_MS) * HOUR_MS
+    const to = Math.ceil((range.to + 1) / HOUR_MS) * HOUR_MS
+    this.pending = null
+    try {
+      for (const view of CONTINUOUS_AGGREGATES) {
+        await this.pool.query(
+          'CALL refresh_continuous_aggregate($1::regclass, $2::timestamptz, $3::timestamptz)',
+          [view, new Date(from).toISOString(), new Date(to).toISOString()],
+        )
+      }
+    } catch (error) {
+      // O trecho volta para a fila: a próxima tentativa o atualiza junto com o que chegar
+      this.mark(range)
+      throw error
+    }
   }
 
-  async flush(): Promise<{ from: number; to: number } | null> {
-    if (!this.pending) return null
-    const from = Math.floor(this.pending.from / HOUR_MS) * HOUR_MS
-    const to = Math.ceil((this.pending.to + 1) / HOUR_MS) * HOUR_MS
-    this.pending = null
+  /**
+   * Atualiza tudo o que o TimescaleDB marcou como invalidado e ainda não foi materializado. O trecho
+   * pendente só existe em memória: se o processo cai entre a gravação do lote (que já avançou o
+   * checkpoint) e a atualização, a retomada não sabe dele, e a atualização seguinte passaria a marca
+   * d'água por cima, deixando um buraco permanente. Sem invalidação pendente, custa quase nada.
+   */
+  async catchUp(): Promise<void> {
     for (const view of CONTINUOUS_AGGREGATES) {
-      await this.pool.query(
-        'CALL refresh_continuous_aggregate($1::regclass, $2::timestamptz, $3::timestamptz)',
-        [view, new Date(from).toISOString(), new Date(to).toISOString()],
-      )
+      await this.pool.query('CALL refresh_continuous_aggregate($1::regclass, NULL, NULL)', [view])
     }
-    return { from, to }
   }
 }

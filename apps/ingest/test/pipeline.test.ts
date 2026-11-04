@@ -126,4 +126,28 @@ describe('ingestão da telemetria', () => {
     expect(report.stuckEpisodes[0]).toMatchObject({ deviceId: 'DEV-A', value: 22.4 })
     expect(report.gaps.map((gap) => gap.deviceId)).toEqual(['DEV-B', 'DEV-B'])
   })
+
+  test('duplicata exata não conta duas vezes o código de erro nem o reinício', async () => {
+    // Os pacotes com o -127 do DEV-A e os que começam com o 85 do reinício do DEV-B chegam duas vezes
+    const repeated = (line: string) => line.includes(',-127,') || line.includes('"Temperature":[85,')
+    let reboots = 0
+    const twice = await createTestEnvironment({
+      telemetry: (lines) => {
+        reboots = lines.filter((line) => line.includes('"Temperature":[85,')).length
+        return lines.flatMap((line) => (repeated(line) ? [line, line] : [line]))
+      },
+    })
+    try {
+      await twice.replay()
+      const report = await twice.qualityReport()
+      expect(report.packets.exactDuplicates).toBe(expected.exactDuplicates + reboots + 1)
+      const { sensorError, rawErrorCodes } = report.samples
+      expect(sensorError).toBe(expected.sensorErrorSamples)
+      expect(rawErrorCodes).toEqual({ minus127: 1, plus85: reboots })
+      expect(rawErrorCodes.minus127 + rawErrorCodes.plus85).toBe(sensorError)
+      expect(report.devices.reboots).toBe(reboots)
+    } finally {
+      await twice.cleanup()
+    }
+  }, 120_000)
 })

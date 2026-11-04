@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { EVENTS_CHANNEL } from '@celsius/domain'
 import pg from 'pg'
 import { Projector } from '../src/pipeline/projections'
-import { EVENTS_CHANNEL } from '../src/pipeline/sinks'
 import { loadEnvironments } from '../src/registry'
 import { createTestEnvironment, expected, type TestEnvironment } from './support'
 
