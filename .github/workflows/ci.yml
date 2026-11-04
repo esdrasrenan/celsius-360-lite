@@ -94,6 +94,8 @@ jobs:
           if ($status -ne 1) { throw "com a 8080 ocupada o script devia sair com 1 (saiu com $status)" }
           if (-not (Select-String -LiteralPath .env -Pattern '^DEMO_PASSWORD=[A-Za-z0-9]{16}$' -Quiet)) { throw 'faltou a senha gerada no .env' }
           Remove-Item .env
+          # O Actions termina o passo com "exit $LASTEXITCODE", que ainda guarda o 1 esperado do script
+          exit 0
       - name: PSScriptAnalyzer
         shell: powershell
         run: |
