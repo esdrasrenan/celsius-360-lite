@@ -125,6 +125,7 @@ Os primitivos com teclado, foco e ARIA vêm do [Base UI](https://base-ui.com) 1.
 | `ComfortBar`       | —                | Na faixa, abaixo e acima, com a marca da meta e o aviso de cobertura baixa.                       |
 | `EmptyState`       | —                | Sempre com o próximo passo.                                                                       |
 | `ErrorState`       | —                | Mensagem em português por status, "Tentar de novo" e o `requestId` para copiar.                   |
+| `RefreshFailed`    | —                | Atualização que falhou: os dados ficam na tela, com o aviso △ e "Tentar de novo".                 |
 
 ## Gráfico de temperatura
 

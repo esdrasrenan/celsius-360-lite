@@ -145,7 +145,7 @@ Cada requisito do desafio e onde vê-lo funcionando. Os comandos valem para Powe
 | Temperatura externa (Open-Meteo)                                                                 | A linha tracejada "Externa" no gráfico do detalhe                                                                                                                                                                                                                                                       |
 | Tempo real                                                                                       | Com a aplicação aberta: `docker compose run --rm ingest bun run apps/ingest/src/main.ts replay --rebuild`. O chip do cabeçalho vira "Ao vivo", e as telas se esvaziam e voltam a encher sozinhas. A reprodução leva cerca de 3 minutos, no ritmo da demonstração.                                       |
 | Autenticação e multi-tenant                                                                      | Saia e entre como `juliana.prado@modacarioca.example`: ela vê só a Loja Paulista. Um ambiente de outra loja responde 404, como se não existisse.                                                                                                                                                        |
-| Reprocessamento seguro                                                                           | `docker compose run --rm ingest bun run apps/ingest/src/main.ts replay --from-start --rate 0` (cerca de 40 s; sem `--rate 0`, segue o ritmo da demonstração e leva 3 minutos) e repita as duas contagens acima: nada duplica.                                                                           |
+| Reprocessamento seguro                                                                           | `docker compose run --rm ingest bun run apps/ingest/src/main.ts replay --from-start --rate 0` (cerca de 40 s; sem `--rate 0`, segue o ritmo da demonstração e leva 3 minutos) e repita as duas contagens acima: nada duplica, e nenhum status da visão da rede muda.                                    |
 | Qualidade dos dados                                                                              | A página [Qualidade dos dados](http://127.0.0.1:8080/qualidade), como administrador, e [docs/qualidade-dos-dados.md](docs/qualidade-dos-dados.md)                                                                                                                                                       |
 | Identidade visual da Diel                                                                        | [docs/DESIGN.md](docs/DESIGN.md): tokens, tipografia, contraste verificado e componentes                                                                                                                                                                                                                |
 | Testes e CI                                                                                      | O selo do CI no topo e a seção [Confiabilidade e operação](#confiabilidade-e-operação)                                                                                                                                                                                                                  |
@@ -265,6 +265,7 @@ erDiagram
 - **Ingestão:**
   - **Leitura em fluxo:** um processo lê a fonte sem carregar o arquivo inteiro, agrupa em lotes e grava em dois destinos.
   - **Entrega:** "pelo menos uma vez", com destinos idempotentes. O cru pula o que já existe pela marca d'água de `seq`. A série ignora amostra repetida (chave dispositivo + instante). Estado e checkpoint só avançam (`GREATEST`). Série, estado e checkpoint vão numa transação por lote.
+  - **Releitura desde o início (`--from-start`):** o que já passou pelo checkpoint é tratado como reentrega. Regrava só a série (sem efeito, ou repondo o que faltar) e repete a decisão do relógio guardada no cru. O estado dos dispositivos não muda, então nenhum status muda; o teste compara série, estado e status antes e depois.
   - **Falhas:** se o banco cai, a ingestão tenta de novo e retoma do checkpoint. No SIGTERM, grava o lote em curso e para.
 - **Lado de leitura separado (CQRS).** A cada ciclo, a ingestão aplica as regras do domínio e recalcula:
   - o status e a situação de cada ambiente;
@@ -275,7 +276,8 @@ erDiagram
 - **API sem estado de negócio, escalável horizontalmente.**
   - **Tempo real:** usa `LISTEN/NOTIFY` do Postgres. A ingestão notifica ao atualizar as projeções, e a API repassa por Server-Sent Events. O primeiro evento traz o estado atual da ingestão.
   - **O que ainda vive na memória do processo:** o bloqueio de login e o cache de escopo, ambos por instância. A sessão sobrevive a reinícios porque o segredo fica num volume.
-- **"Agora"** é sempre o horário do último pacote processado, nunca o relógio do servidor. Os períodos e os status partem dele, e a reprodução é determinística: rodar duas vezes gera exatamente o mesmo estado.
+- **"Agora":** o enunciado manda usar o horário do último pacote processado, nunca o relógio do servidor. A interpretação adotada é o maior horário já processado de um dispositivo cadastrado. Os períodos e os status partem dele, e a reprodução é determinística: reprocessar gera exatamente o mesmo estado.
+  - **Pacote atrasado:** um pacote com `saved_data` que chega horas depois entra na série no instante certo, mas não faz o "agora" voltar. Ler a regra ao pé da letra faria o "agora" andar para trás a cada reenvio, e os status piscariam.
   - **Proteção contra relógio adiantado:** um único dispositivo com o relógio adiantado não consegue empurrar o "agora". Um salto de mais de 10 min só vale quando outros dispositivos cadastrados confirmam um horário próximo (2 ou 20% dos que enviaram na última hora, o que for maior); sem isso, o pacote vai para o cru marcado e fica de fora.
   - **Dispositivo fora do cadastro:** nunca mexe no relógio.
 
@@ -429,6 +431,8 @@ React 19 com Vite, React Router, TanStack Query, Base UI e ECharts, compilada co
   - o relatório de qualidade dos dados.
 - **Resiliência:**
   - o pool trata a queda do banco, e consulta lenta tem limite (`statement_timeout`);
+  - com o banco fora, a API responde 503 em português, e a sessão continua válida: falha de infraestrutura não vira "sessão expirada";
+  - se uma atualização falha, a tela mantém os dados, avisa que eles podem estar desatualizados e oferece "Tentar de novo";
   - uma requisição ruim nunca derruba o processo;
   - a ingestão retoma do checkpoint;
   - os serviços voltam sozinhos depois de reiniciar o Docker.
@@ -448,7 +452,11 @@ React 19 com Vite, React Router, TanStack Query, Base UI e ECharts, compilada co
 
 ## Como escalaria
 
-Com os 110 mil dispositivos da Diel, a um pacote a cada 6 minutos, são cerca de 300 pacotes por segundo; 20 GB por dia são cerca de 230 KB/s. Esta ingestão, num processo só, grava cerca de 3.400 pacotes por segundo no cru e na série: 180.951 pacotes em 53 s, num desktop com Intel i7-14700F e Docker Desktop no Windows. Para medir na sua máquina, rode `docker compose run --rm ingest bun run apps/ingest/src/main.ts replay --rebuild --rate 0` e divida `packets` por `seconds` no log "ingestão concluída" (o `--rebuild` refaz a série e pula o cru já gravado; aqui levou 53,7 s). O desenho para produção:
+Com os 110 mil dispositivos da Diel, a um pacote a cada 6 minutos, são cerca de 300 pacotes por segundo; 20 GB por dia são cerca de 230 KB/s.
+
+**O que foi medido.** Com bancos vazios, numa stack à parte subida com `INGEST_RATE=0`, um processo só gravou os 180.951 pacotes do desafio em 52 s: cru, série, estado e projeções, cerca de 3.500 pacotes por segundo. A máquina foi um desktop com Intel i7-14700F e Docker Desktop no Windows. Para medir na sua máquina sem outra stack, rode `docker compose run --rm ingest bun run apps/ingest/src/main.ts replay --rebuild --rate 0` e divida `packets` por `seconds` no log "ingestão concluída". Esse comando apaga e refaz a série e o estado, e as telas se esvaziam e voltam a encher, mas ele pula o cru já gravado. Aqui, duas rodadas seguidas levaram 50 s e 89 s: o número varia com a máquina e com o Docker.
+
+**O que isso não prova.** O número vale para 25 dispositivos. Com 110 mil, crescem o estado em memória, as projeções recalculadas a cada ciclo e a variedade de cada lote, e um processo só não foi testado nessa escala. Quem sustenta essa escala é o desenho para produção, com consumidores em paralelo por partição:
 
 1. **Borda:** os dispositivos publicam em MQTT (EMQX ou HiveMQ). Uma ponte joga no Kafka ou no Pub/Sub, particionado por dispositivo para manter a ordem. O "agora" passa a ser o horário de recebimento no broker.
 2. **Processamento:**
