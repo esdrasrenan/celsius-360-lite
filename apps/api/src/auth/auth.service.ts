@@ -82,18 +82,29 @@ export class AuthService {
     return { user, token }
   }
 
-  /** Valida o token e recarrega o usuário com o escopo atual (cache curto, para refletir mudanças no cadastro). */
+  /**
+   * Valida o token e recarrega o usuário com o escopo atual (cache curto, para refletir mudanças no
+   * cadastro). Token inválido ou expirado é sessão inválida (null, e o guard responde 401). Já a falha
+   * do banco ao recarregar o usuário não diz nada da sessão: sobe como indisponibilidade (503), e a
+   * web mostra o erro com "Tentar de novo" em vez de mandar todo mundo para o login.
+   */
   async resolve(token: string): Promise<SessionUser | null> {
+    const subject = await this.subjectOf(token)
+    if (!subject) return null
+    const cached = this.cache.get(subject)
+    if (cached && cached.expires > Date.now()) return cached.user
+    const { rows } = await this.pool.query<UserRow>(`${USER_QUERY} WHERE u.id = $1`, [subject])
+    if (!rows[0]) return null
+    const user = toSessionUser(rows[0])
+    this.cache.set(user.id, { user, expires: Date.now() + SCOPE_CACHE_MS })
+    return user
+  }
+
+  /** Dono do token, quando a assinatura e a validade conferem. */
+  private async subjectOf(token: string): Promise<string | null> {
     try {
       const { payload } = await jwtVerify(token, this.key, { algorithms: ['HS256'] })
-      if (!payload.sub) return null
-      const cached = this.cache.get(payload.sub)
-      if (cached && cached.expires > Date.now()) return cached.user
-      const { rows } = await this.pool.query<UserRow>(`${USER_QUERY} WHERE u.id = $1`, [payload.sub])
-      if (!rows[0]) return null
-      const user = toSessionUser(rows[0])
-      this.cache.set(user.id, { user, expires: Date.now() + SCOPE_CACHE_MS })
-      return user
+      return payload.sub || null
     } catch {
       return null
     }

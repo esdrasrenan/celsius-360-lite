@@ -57,17 +57,50 @@ const GENERIC_DETAIL: Record<number, string> = {
 }
 const INTERNAL_DETAIL = 'Erro interno. Tente de novo em instantes.'
 const TIMEOUT_DETAIL = 'A consulta passou do tempo limite. Tente de novo ou escolha um período menor.'
+const DATABASE_DETAIL = 'O banco de dados não respondeu. Tente de novo em instantes.'
+
+const codeOf = (exception: unknown) => (exception as { code?: unknown } | null)?.code
 
 /** statement_timeout do Postgres (query_canceled): é sobrecarga, não defeito. */
-const isQueryTimeout = (exception: unknown) => (exception as { code?: unknown } | null)?.code === '57014'
+const isQueryTimeout = (exception: unknown) => codeOf(exception) === '57014'
+
+/**
+ * Códigos de banco fora do ar ou recusando conexões: os do socket (inclusive o AggregateError de
+ * um nome com dois endereços) e os SQLSTATE de desligamento, de "ainda subindo" e de excesso de
+ * conexões. A classe 08 inteira é falha de conexão.
+ */
+const UNAVAILABLE_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'EHOSTUNREACH',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  '57P01',
+  '57P02',
+  '57P03',
+  '53300',
+])
+
+/** Banco indisponível é 503 (tente de novo), não 500 (defeito) nem 401 (sessão). */
+export function isDatabaseUnavailable(exception: unknown): boolean {
+  const code = codeOf(exception)
+  if (typeof code === 'string' && (UNAVAILABLE_CODES.has(code) || code.startsWith('08'))) return true
+  // O pg não põe código no tempo de conexão esgotado nem na conexão que caiu no meio da consulta
+  const message = exception instanceof Error ? exception.message : ''
+  return /timeout exceeded when trying to connect|Connection terminated/.test(message)
+}
 
 function statusOf(exception: unknown): number {
   if (exception instanceof HttpException) return exception.getStatus()
-  return isQueryTimeout(exception) ? HttpStatus.SERVICE_UNAVAILABLE : HttpStatus.INTERNAL_SERVER_ERROR
+  return isQueryTimeout(exception) || isDatabaseUnavailable(exception)
+    ? HttpStatus.SERVICE_UNAVAILABLE
+    : HttpStatus.INTERNAL_SERVER_ERROR
 }
 
 function detailOf(exception: unknown, status: number, request: Request): string {
   if (isQueryTimeout(exception)) return TIMEOUT_DETAIL
+  if (isDatabaseUnavailable(exception)) return DATABASE_DETAIL
   const generic =
     GENERIC_DETAIL[status] ?? (status >= 500 ? INTERNAL_DETAIL : (GENERIC_DETAIL[400] as string))
   if (!(exception instanceof HttpException)) return generic
@@ -94,6 +127,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
 
     const status = statusOf(exception)
     if (status >= 500) this.logger.error(exception)
+    if (isDatabaseUnavailable(exception)) response.setHeader('retry-after', '5')
     const payload = exception instanceof HttpException ? exception.getResponse() : null
     const extra: ExceptionBody = typeof payload === 'object' && payload !== null ? payload : {}
 

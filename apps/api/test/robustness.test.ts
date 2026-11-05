@@ -15,6 +15,7 @@ import {
   type TestEnvironment,
 } from '../../ingest/test/support'
 import { AttemptLimiter } from '../src/auth/attempt-limiter'
+import { isDatabaseUnavailable } from '../src/common/problem.filter'
 import { parseInstant } from '../src/common/time'
 import { ConfigError, loadConfig } from '../src/config'
 import { HttpMetrics } from '../src/ops/http-metrics'
@@ -278,6 +279,75 @@ describe('problem+json (P0 #8)', () => {
     const error = await controller.ready().catch((reason: unknown) => reason)
     expect(error).toBeInstanceOf(ServiceUnavailableException)
     expect((error as Error).message).toBe('Banco indisponível ou não migrado.')
+  })
+})
+
+describe('banco fora do ar', () => {
+  const DOWN_DETAIL = 'O banco de dados não respondeu. Tente de novo em instantes.'
+
+  test('quem tem sessão válida recebe 503 e continua logado; token inválido segue 401', async () => {
+    // Outra instância, com o banco numa porta onde ninguém escuta. O cookie vem da instância de
+    // verdade, com assinatura válida, mas o usuário não está no cache desta
+    const saved = process.env.DATABASE_URL
+    process.env.DATABASE_URL = 'postgres://celsius@127.0.0.1:1/celsius'
+    const { AppModule } = await import('../src/app.module')
+    const { configureApp, NEST_OPTIONS } = await import('../src/setup')
+    const down = await NestFactory.create(AppModule, { logger: false, ...NEST_OPTIONS })
+    process.env.DATABASE_URL = saved
+    configureApp(down)
+    await down.listen(0, '127.0.0.1')
+    const at = `http://127.0.0.1:${(down.getHttpServer().address() as { port: number }).port}`
+    try {
+      for (const path of ['/api/v1/auth/me', '/api/v1/stores', '/api/v1/events']) {
+        const response = await fetch(`${at}${path}`, { headers: { cookie: cookies.admin as string } })
+        expect({ path, status: response.status }).toEqual({ path, status: 503 })
+        expect(response.headers.get('content-type')).toContain('application/problem+json')
+        expect(response.headers.get('retry-after')).toBe('5')
+        expect(await response.json()).toMatchObject({ status: 503, detail: DOWN_DETAIL })
+      }
+      const forged = await fetch(`${at}/api/v1/auth/me`, {
+        headers: { cookie: 'celsius_session=nao-e-um-jwt' },
+      })
+      expect(forged.status).toBe(401)
+      // O login também diz que o problema é o banco, e não "e-mail ou senha incorretos"
+      const attempt = await fetch(`${at}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'admin@teste.example', password: TEST_PASSWORD }),
+      })
+      expect(attempt.status).toBe(503)
+    } finally {
+      await down.close()
+    }
+  }, 30_000)
+
+  test('reconhece os erros de conexão do pg e não confunde com defeito', () => {
+    const coded = (code: string, message = '') => Object.assign(new Error(message), { code })
+    for (const error of [
+      coded('ECONNREFUSED', 'connect ECONNREFUSED 127.0.0.1:5432'),
+      // "localhost" com dois endereços recusados chega como AggregateError, com o código no topo
+      Object.assign(new AggregateError([coded('ECONNREFUSED'), coded('ECONNREFUSED')]), {
+        code: 'ECONNREFUSED',
+      }),
+      coded('ENOTFOUND', 'getaddrinfo ENOTFOUND postgres'),
+      coded('57P03', 'the database system is starting up'),
+      coded('57P01', 'terminating connection due to administrator command'),
+      coded('08006'),
+      coded('53300', 'sorry, too many clients already'),
+      new Error('timeout exceeded when trying to connect'),
+      new Error('Connection terminated unexpectedly'),
+    ]) {
+      expect(isDatabaseUnavailable(error)).toBe(true)
+    }
+    for (const error of [
+      coded('42P01', 'relation "x" does not exist'),
+      coded('57014', 'canceling statement due to statement timeout'),
+      new Error('password authentication failed'),
+      new TypeError('x is undefined'),
+      null,
+    ]) {
+      expect(isDatabaseUnavailable(error)).toBe(false)
+    }
   })
 })
 
