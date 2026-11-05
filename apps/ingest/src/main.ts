@@ -31,7 +31,7 @@ Comandos:
 
 Opções do replay:
   --rate <n>      pacotes por segundo (padrão: INGEST_RATE; 0 = sem limite)
-  --from-start    relê a fonte desde o início (idempotente: não duplica nada)
+  --from-start    relê a fonte desde o início (idempotente: não duplica nem muda o estado)
   --rebuild       apaga a série tratada e o estado e reprocessa tudo (use ao mudar uma regra)
   --update-cache  grava o cache da temperatura externa (comando weather)
 

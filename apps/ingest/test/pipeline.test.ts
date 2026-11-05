@@ -23,6 +23,20 @@ const fingerprint = () =>
        (SELECT count(*) FROM telemetry.reading_5m) AS buckets,
        (SELECT sum(samples) FROM telemetry.reading_1h) AS samples`,
   )
+/** Estado que a interface mostra: memória dos dispositivos, status e situação, lojas e checkpoint. */
+const state = async () => {
+  // updated_at é o relógio do banco na última gravação, não um dado
+  const rows = async (sql: string) =>
+    (await env.pool.query<Record<string, unknown>>(sql)).rows.map(({ updated_at, ...row }) => row)
+  return {
+    devices: await rows('SELECT * FROM state.device ORDER BY device_id'),
+    unknown: await rows('SELECT * FROM state.unknown_device ORDER BY device_id'),
+    environments: await rows('SELECT * FROM state.environment_snapshot ORDER BY environment_id'),
+    indicators: await rows('SELECT * FROM state.environment_indicator ORDER BY environment_id, period'),
+    stores: await rows('SELECT * FROM state.store_snapshot ORDER BY store_id, period'),
+    ingestion: await rows('SELECT source, last_seq, now_ts FROM state.ingestion'),
+  }
+}
 
 beforeAll(async () => {
   env = await createTestEnvironment()
@@ -100,12 +114,19 @@ describe('ingestão da telemetria', () => {
     expect(samples).toBe(readings)
   })
 
-  test('reprocessar desde o início não duplica nem altera nada', async () => {
+  test('reprocessar desde o início não duplica nem altera nada, nem o status', async () => {
     const before = await fingerprint()
     const raw = await rawCount()
-    await env.replay({ fromStart: true })
+    const shown = await state()
+    // O fixture termina com o DEV-B parado: a releitura não pode tirá-lo do offline
+    expect(shown.environments).toContainEqual(
+      expect.objectContaining({ environment_id: 'AMB-T2', status: 'offline' }),
+    )
+    const summary = await env.replay({ fromStart: true })
+    expect(summary.packets).toBe(expected.lines)
     expect(await fingerprint()).toEqual(before)
     expect(await rawCount()).toEqual(raw)
+    expect(await state()).toEqual(shown)
   }, 120_000)
 
   test('rodar de novo retoma do checkpoint e não processa nada', async () => {

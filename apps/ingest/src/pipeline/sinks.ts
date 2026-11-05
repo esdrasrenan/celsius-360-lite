@@ -27,6 +27,18 @@ export class RawSink {
     return this.highWaterMark
   }
 
+  /** Posições até `upTo` que o relógio recusou (timestamp_futuro), para a releitura repetir a decisão. */
+  async refusedUpTo(upTo: number): Promise<Set<number>> {
+    const result = await this.clickhouse.query({
+      query: `SELECT DISTINCT seq FROM raw.telemetry_packet
+              WHERE source = {source:String} AND seq <= {upTo:UInt64} AND error = 'timestamp_futuro'`,
+      query_params: { source: this.source, upTo },
+      format: 'JSONEachRow',
+    })
+    const rows = await result.json<{ seq: string | number }>()
+    return new Set(rows.map((row) => Number(row.seq)))
+  }
+
   async write(rows: readonly RawRow[]): Promise<number> {
     const fresh = rows.filter((row) => row.seq > this.highWaterMark)
     if (fresh.length === 0) return 0

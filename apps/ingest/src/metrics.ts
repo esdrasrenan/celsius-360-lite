@@ -43,12 +43,13 @@ export class IngestMetrics {
   }
 
   observeBatch(batch: Batch, durationMs: number) {
-    const { packets, invalid, unknownDevice, late, future } = batch.stats
+    const { packets, invalid, unknownDevice, late, future, redelivered } = batch.stats
     this.packets.inc({ result: 'valid' }, packets - invalid - unknownDevice - future)
     if (invalid) this.packets.inc({ result: 'invalid' }, invalid)
     if (unknownDevice) this.packets.inc({ result: 'unknown_device' }, unknownDevice)
     if (future) this.packets.inc({ result: 'future_timestamp' }, future)
     if (late) this.packets.inc({ result: 'late' }, late)
+    if (redelivered) this.packets.inc({ result: 'redelivered' }, redelivered)
     const byQuality = new Map<number, number>()
     for (const reading of batch.readings)
       byQuality.set(reading.quality, (byQuality.get(reading.quality) ?? 0) + 1)

@@ -106,6 +106,58 @@ describe('"agora" da ingestão', () => {
   })
 })
 
+describe('releitura desde o início (replay --from-start)', () => {
+  test('o que já foi processado regrava a série, repete a decisão do relógio e não muda o estado', () => {
+    // Primeira passada: o IOT001 manda um pacote 90 min à frente, recusado, e depois para de enviar
+    const { processor, devices, send } = fleet('IOT001', 'IOT002', 'IOT003')
+    const back = t0 + 90 * minute
+    const lines = [
+      packet('IOT001', t0),
+      packet('IOT002', t0),
+      packet('IOT003', t0),
+      packet('IOT001', back),
+      ...Array.from({ length: 30 }, (_, index) =>
+        packet(index % 2 ? 'IOT002' : 'IOT003', t0 + (index + 1) * 6 * minute),
+      ),
+    ]
+    const refused = new Set<number>()
+    for (const [index, line] of lines.entries()) {
+      if (send(line).stats.future) refused.add(index + 1)
+    }
+    expect(refused).toEqual(new Set([4]))
+    expect(deviceStatus(devices.get('IOT001') ?? null, processor.currentNow ?? 0)).toBe('offline')
+
+    // Releitura com o "agora" final, que aceitaria o salto de 90 min, e o estado da primeira passada
+    const before = structuredClone(devices)
+    const again = new TelemetryProcessor(
+      'teste',
+      ['IOT001', 'IOT002', 'IOT003'].map(environment),
+      devices,
+      processor.currentNow,
+      { upTo: lines.length, refused },
+    )
+    for (const [index, line] of lines.entries()) again.process({ seq: index + 1, line }, 0)
+    const batch = again.drain()
+
+    expect(batch.stats).toMatchObject({
+      packets: lines.length,
+      redelivered: lines.length,
+      future: 1,
+      late: 0,
+    })
+    expect(batch.readings).toHaveLength((lines.length - 1) * 12)
+    expect(batch.devices.size).toBe(0)
+    expect(devices).toEqual(before)
+    expect(again.currentNow).toBe(processor.currentNow)
+    expect(deviceStatus(devices.get('IOT001') ?? null, again.currentNow ?? 0)).toBe('offline')
+
+    // Depois do checkpoint, pacote novo volta ao caminho normal
+    again.process({ seq: lines.length + 1, line: packet('IOT001', t0 + 31 * 6 * minute) }, 0)
+    expect(again.drain().devices.get('IOT001')?.lastContactAt).toBe(again.currentNow ?? Number.NaN)
+    expect(deviceStatus(devices.get('IOT001') ?? null, again.currentNow ?? 0)).toBe('online')
+  })
+})
+
 describe('sensor travado', () => {
   test('o dispositivo passa a falha no sensor no pacote em que o travamento é detectado', () => {
     const { processor, devices, send } = fleet('IOT014', 'IOT015')

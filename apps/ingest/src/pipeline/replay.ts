@@ -8,7 +8,7 @@ import type { IngestMetrics } from '../metrics'
 import { loadEnvironments } from '../registry'
 import { AggregateRefresher } from './aggregates'
 import { readLines } from './lines'
-import { type DeviceMemory, TelemetryProcessor } from './processor'
+import { type DeviceMemory, type Redelivery, TelemetryProcessor } from './processor'
 import { Projector } from './projections'
 import { RawSink, SeriesSink } from './sinks'
 
@@ -118,18 +118,27 @@ export async function replay(deps: Deps, config: Config, options: ReplayOptions)
     'SELECT last_seq, now_ts FROM state.ingestion WHERE source = $1',
     [source],
   )
-  const resumeAfter = options.fromStart ? 0 : (checkpoint.rows[0]?.last_seq ?? 0)
+  const processed = checkpoint.rows[0]?.last_seq ?? 0
+  const resumeAfter = options.fromStart ? 0 : processed
+  const rawSink = new RawSink(clickhouse, source)
+  const rawHighWaterMark = await rawSink.init()
+  // Desde o início, o que já passou pelo checkpoint é reentrega: regrava a série (sem efeito, ou
+  // repondo o que faltar) e não muda o estado. Assim, reprocessar não altera nenhum status
+  const redelivery: Redelivery = {
+    upTo: options.fromStart ? processed : 0,
+    refused: options.fromStart && processed > 0 ? await rawSink.refusedUpTo(processed) : new Set(),
+  }
   const devices = await loadDeviceMemory(pool)
   const processor = new TelemetryProcessor(
     source,
     environments,
     devices,
     checkpoint.rows[0]?.now_ts?.getTime() ?? null,
+    redelivery,
   )
-  if (resumeAfter > 0) await restoreStuckRuns(pool, processor)
+  // As reentregas não passam pela detecção de sensor travado: o detector parte do ponto do checkpoint
+  if (processed > 0) await restoreStuckRuns(pool, processor)
 
-  const rawSink = new RawSink(clickhouse, source)
-  const rawHighWaterMark = await rawSink.init()
   const seriesSink = new SeriesSink(pool)
   const aggregates = new AggregateRefresher(pool)
   // Uma queda entre o lote e a atualização deixa trecho sem materializar: recupera antes de seguir
@@ -140,11 +149,16 @@ export async function replay(deps: Deps, config: Config, options: ReplayOptions)
     {
       source,
       resumeAfter,
+      redeliveredUpTo: redelivery.upTo,
       rawHighWaterMark,
       rate: options.rate || 'sem limite',
       environments: environments.length,
     },
-    resumeAfter > 0 ? 'retomando a ingestão do checkpoint' : 'iniciando a ingestão',
+    resumeAfter > 0
+      ? 'retomando a ingestão do checkpoint'
+      : redelivery.upTo > 0
+        ? 'relendo desde o início: o que já foi processado não muda o estado'
+        : 'iniciando a ingestão',
   )
 
   let stopping = false
@@ -175,7 +189,8 @@ export async function replay(deps: Deps, config: Config, options: ReplayOptions)
   }
   const refresh = async () => {
     await aggregates.flush()
-    await projector.refresh(processor.currentNow, devices, lastSeq)
+    // Na releitura, o aviso leva a posição do checkpoint, que não volta
+    await projector.refresh(processor.currentNow, devices, Math.max(lastSeq, processed))
   }
 
   try {

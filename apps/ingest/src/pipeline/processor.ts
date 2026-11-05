@@ -61,8 +61,28 @@ export interface Batch {
   validReset: Set<string>
   unknownDevices: Map<string, { firstSeen: number; lastSeen: number }>
   touched: { from: number; to: number } | null
-  stats: { packets: number; invalid: number; unknownDevice: number; late: number; future: number }
+  stats: {
+    packets: number
+    invalid: number
+    unknownDevice: number
+    late: number
+    future: number
+    /** Já processados antes, relidos por um replay desde o início */
+    redelivered: number
+  }
 }
+
+/**
+ * Releitura desde o início (`replay --from-start`): os pacotes até a posição do checkpoint já foram
+ * processados. A decisão do relógio sobre eles é a que ficou gravada no cru (`refused` lista os
+ * recusados como timestamp_futuro), e o estado dos dispositivos já os contém.
+ */
+export interface Redelivery {
+  upTo: number
+  refused: ReadonlySet<number>
+}
+
+const NO_REDELIVERY: Redelivery = { upTo: 0, refused: new Set() }
 
 const toClickHouseTime = (ms: number) => new Date(ms).toISOString().replace('T', ' ').slice(0, 19)
 
@@ -89,6 +109,7 @@ export class TelemetryProcessor {
     environments: readonly EnvironmentContext[],
     private readonly devices: Map<string, DeviceMemory>,
     now: number | null,
+    private readonly redelivery: Redelivery = NO_REDELIVERY,
   ) {
     this.byDevice = new Map(
       environments.flatMap((environment) =>
@@ -145,7 +166,12 @@ export class TelemetryProcessor {
 
     const { packet, sentAt } = parsed
     const context = this.byDevice.get(packet.dev_id)
-    const accepted = !context || this.clock.accept(packet.dev_id, sentAt)
+    // A reentrega repete a decisão original sem passar pelo relógio, que já está no "agora" final:
+    // ali, um salto recusado na época passaria, e o relógio guardaria horários que já viu
+    const redelivered = seq <= this.redelivery.upTo
+    if (redelivered) batch.stats.redelivered++
+    const accepted =
+      !context || (redelivered ? !this.redelivery.refused.has(seq) : this.clock.accept(packet.dev_id, sentAt))
     batch.now = this.clock.now
     batch.raw.push({
       ...base,
@@ -177,8 +203,8 @@ export class TelemetryProcessor {
     const state = this.devices.get(packet.dev_id)
     const first = samples[0] as { ts: number }
     const last = samples.at(-1) as { ts: number }
-    const live = !state || first.ts > state.lastSampleAt
-    if (!live) batch.stats.late++
+    const live = !redelivered && (!state || first.ts > state.lastSampleAt)
+    if (!live && !redelivered) batch.stats.late++
 
     const values = samples.map((sample) => sample.value)
     const qualities = values.map(classifyValue)
@@ -208,6 +234,11 @@ export class TelemetryProcessor {
       })
     }
     this.touch(first.ts, last.ts)
+
+    // A série é regravada (a chave ignora o que já existe), mas o estado do dispositivo já contém
+    // este pacote: registrar o contato de novo usaria o "agora" atual e tiraria do offline um
+    // dispositivo que parou de enviar
+    if (redelivered) return
 
     // Antes do primeiro "agora" confirmado, o contato é o horário do próprio pacote
     const now = this.clock.now ?? sentAt
@@ -262,7 +293,7 @@ export class TelemetryProcessor {
       validReset: new Set(),
       unknownDevices: new Map(),
       touched: null,
-      stats: { packets: 0, invalid: 0, unknownDevice: 0, late: 0, future: 0 },
+      stats: { packets: 0, invalid: 0, unknownDevice: 0, late: 0, future: 0, redelivered: 0 },
     }
   }
 }
