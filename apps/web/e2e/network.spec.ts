@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import type { StoreList } from '@celsius/contracts'
 import { expect, type Page, test } from '@playwright/test'
-import { sessionFile } from './support'
+import { fakeLiveUpdates, serverError, sessionFile } from './support'
 
 /**
  * Visão da rede (seção 4.2, critérios 8.5, 8.6, 8.7 e 8.9) contra a stack de E2E (test/fixtures/e2e):
@@ -259,6 +259,27 @@ test.describe('estados (8.7)', () => {
     await page.unroute(STORES_API)
     await page.getByRole('button', { name: 'Tentar de novo' }).click()
     await expect.poll(async () => (await storeNames(page)).length).toBe(2)
+  })
+
+  test('atualização ao vivo que falha: a lista fica, com o aviso e "Tentar de novo"', async ({ page }) => {
+    const liveUpdate = await fakeLiveUpdates(page)
+    await page.goto('/')
+    await expect.poll(async () => (await storeNames(page)).length).toBe(2)
+
+    let failing = true
+    await page.route(STORES_API, (route) => (failing ? route.fulfill(serverError) : route.continue()))
+    await liveUpdate()
+    // Agrupamento de 1,5 s e duas novas tentativas (1 s e 2 s) antes de desistir
+    const notice = page.getByRole('status').filter({ hasText: 'A atualização falhou' })
+    await expect(notice).toBeVisible({ timeout: 15_000 })
+    expect(await storeNames(page)).toHaveLength(2)
+    await expect(kpis(page).getByText('—', { exact: true })).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'O servidor não respondeu' })).toHaveCount(0)
+
+    failing = false
+    await notice.getByRole('button', { name: 'Tentar de novo' }).click()
+    await expect(notice).toBeHidden()
+    expect(await storeNames(page)).toHaveLength(2)
   })
 
   test('400: "Limpar filtros" redefine a URL', async ({ page }) => {

@@ -6,6 +6,7 @@ import { buttonClass } from '../../components/Button'
 import { EmptyState } from '../../components/EmptyState'
 import { ErrorState } from '../../components/ErrorState'
 import { Kpi } from '../../components/Kpi'
+import { RefreshFailed } from '../../components/RefreshFailed'
 import { Skeleton } from '../../components/Skeleton'
 import { formatLongDateTime, NETWORK_TIME_ZONE_LABEL } from '../../lib/format'
 import { ROLE_LABEL } from '../../lib/states'
@@ -85,6 +86,7 @@ export function QualityPage() {
         </p>
       </header>
 
+      <RefreshFailed queries={[quality]} />
       {report ? (
         <QualityReportView report={report} />
       ) : notGenerated ? (

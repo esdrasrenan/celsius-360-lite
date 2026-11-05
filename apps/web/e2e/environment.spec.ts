@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { expect, type Page, test } from '@playwright/test'
-import { horizontalOverflow, sessionFile } from './support'
+import { fakeLiveUpdates, horizontalOverflow, serverError, sessionFile } from './support'
 
 /**
  * Detalhe do ambiente (seção 4.3) contra a stack de E2E (test/fixtures/e2e): "Salão" (AMB-T1) da
@@ -101,6 +101,34 @@ test.describe('detalhe do ambiente', () => {
     const gaps = await gapsDownload
     expect(gaps.suggestedFilename()).toMatch(/^AMB-T1_7d_lacunas_\d{4}-\d{2}-\d{2}\.csv$/)
     expect(await readFile(await gaps.path(), 'utf8')).toContain('Sensor travado')
+  })
+
+  test('atualização ao vivo que falha: gráfico e KPIs ficam, com o aviso e "Tentar de novo"', async ({
+    page,
+  }) => {
+    const liveUpdate = await fakeLiveUpdates(page)
+    await page.goto('/ambientes/AMB-T1?periodo=7d')
+    const chart = page.locator('#grafico-temperatura figure')
+    await expect(chart).toBeVisible()
+    const comfort = page.getByRole('heading', { level: 3, name: 'Conforto no horário' })
+    await expect(comfort).toBeVisible()
+
+    let failing = true
+    await page.route('**/api/v1/environments/**', (route) =>
+      failing ? route.fulfill(serverError) : route.continue(),
+    )
+    await liveUpdate()
+    // Agrupamento de 1,5 s e duas novas tentativas (1 s e 2 s) antes de desistir
+    const notice = page.getByRole('status').filter({ hasText: 'A atualização falhou' })
+    await expect(notice).toBeVisible({ timeout: 15_000 })
+    await expect(chart).toBeVisible()
+    await expect(comfort).toBeVisible()
+    await expect(page.getByRole('heading', { level: 1, name: 'Salão' })).toBeVisible()
+
+    failing = false
+    await notice.getByRole('button', { name: 'Tentar de novo' }).click()
+    await expect(notice).toBeHidden()
+    await expect(chart).toBeVisible()
   })
 
   test('série com erro: tabela e CSV indisponíveis, sem afirmar que não há lacunas', async ({ page }) => {

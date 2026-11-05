@@ -16,6 +16,7 @@ import { Button } from '../../components/Button'
 import { EmptyState } from '../../components/EmptyState'
 import { ErrorState } from '../../components/ErrorState'
 import { Pagination } from '../../components/Pagination'
+import { RefreshFailed } from '../../components/RefreshFailed'
 import { SegmentedControl } from '../../components/SegmentedControl'
 import { Skeleton } from '../../components/Skeleton'
 import { downloadCsv } from '../../lib/csv'
@@ -87,7 +88,8 @@ export function NetworkPage() {
   const data = stores.data
   const reloading = stores.isPlaceholderData
   const firstLoad = stores.isPending
-  const error = stores.isError ? stores.error : null
+  // Erro só da carga: numa atualização que falha, a lista anterior fica, com o aviso no topo
+  const error = stores.isLoadingError ? stores.error : null
   const scopeTotals = filtered ? scope.data?.totals : data?.totals
   const items = !error && data ? data.items : []
   const now = data?.now ?? null
@@ -266,6 +268,7 @@ export function NetworkPage() {
           Não foi possível gerar o CSV. Tente de novo em instantes.
         </p>
       )}
+      <RefreshFailed queries={[stores, scope, clients]} className="-mt-3" />
 
       <NetworkKpis
         totals={data?.totals}

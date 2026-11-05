@@ -18,6 +18,7 @@ import { buttonClass } from '../../components/Button'
 import { EmptyState } from '../../components/EmptyState'
 import { ErrorState } from '../../components/ErrorState'
 import { ProgressBar } from '../../components/ProgressBar'
+import { RefreshFailed } from '../../components/RefreshFailed'
 import { Skeleton } from '../../components/Skeleton'
 import { prefersReducedMotion } from '../../lib/chart-theme'
 import { downloadCsv } from '../../lib/csv'
@@ -237,6 +238,10 @@ export function EnvironmentPage() {
         />
       </div>
 
+      <RefreshFailed
+        queries={[summary, series, recent, profile, daily, previousSummary, previousSeries]}
+        className="print:hidden"
+      />
       <section aria-labelledby="periodo-titulo" className="cartao relative overflow-clip">
         <ProgressBar active={busy} label="Atualizando o período" />
         <h2 id="periodo-titulo" className="so-leitor">
